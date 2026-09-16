@@ -20,6 +20,9 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
+from scoring.models import Score
+
+from .models import AgentExplanation
 from .tools import get_price_history, get_recent_news, get_technical_indicators
 
 logger = logging.getLogger(__name__)
@@ -230,3 +233,39 @@ def explain_score(symbol: str) -> dict:
         ),
         "tool_calls": tool_calls_made,
     }
+
+
+def explain_and_persist(symbol: str):
+    """
+    Corre explain_score(symbol) y persiste el resultado como
+    AgentExplanation ligado al Score más reciente de ese ticker.
+
+    Único lugar donde vive esta lógica -- tanto el management command
+    (explain_score) como el endpoint DRF (GET /api/scores/<symbol>/explain/)
+    llaman a esta misma función, para no duplicarla.
+
+    Devuelve (AgentExplanation, None) si se pudo persistir, o
+    (None, razón:str) si no hay ningún Score para `symbol` (no hay FK
+    a la que ligar la explicación -- corré compute_scores primero).
+    Si explain_score lanza AgentError (config faltante o falla de la
+    API de Gemini), esta función NO la captura: se propaga tal cual
+    para que quien llame decida cómo reportarla (stderr en el command,
+    502 en el endpoint).
+    """
+    symbol = symbol.strip().upper()
+    result = explain_score(symbol)
+
+    latest_score = Score.objects.filter(ticker__symbol=symbol).order_by("-date").first()
+    if latest_score is None:
+        return None, (
+            f"No hay Score persistido para '{symbol}' -- la explicación "
+            "no se guardó como AgentExplanation (corré compute_scores "
+            "primero)."
+        )
+
+    explanation = AgentExplanation.objects.create(
+        score=latest_score,
+        texto=result["texto"],
+        tool_calls=result["tool_calls"],
+    )
+    return explanation, None

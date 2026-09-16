@@ -17,9 +17,10 @@ Automatizar la evaluación técnica de un watchlist de acciones (setup, tendenci
 Django + DRF configurados, modelos de `market_data`, `scoring` y `agent` con sus migraciones y admin registrado.
 - Ingesta de precios (comando manual): `python manage.py load_prices [--tickers=AAPL,MSFT] [--days=90]` descarga OHLCV vía yfinance y hace upsert idempotente en `PriceBar`.
 - Motor de scoring (comando manual): `python manage.py compute_scores [--tickers=AAPL,MSFT]` calcula el `Score` técnico (0-100) de cada ticker a partir de sus `PriceBar` y hace upsert idempotente en `Score` por (ticker, fecha=hoy). Requiere al menos 50 `PriceBar` por ticker (lo que pide SMA50); si no alcanza, loguea el motivo y sigue con el resto sin romper la corrida.
-- Agente explicador (comando manual): `python manage.py explain_score --symbol=AAPL` corre tool-calling real sobre Gemini (el modelo decide qué tools invocar) y persiste el resultado como `AgentExplanation`. Ver "Agente explicador" más abajo.
+- Agente explicador (comando manual): `python manage.py explain_score --symbol=AAPL` corre tool-calling real sobre Gemini (el modelo decide qué tools invocar) y persiste el resultado como `AgentExplanation`. Ver "Agente explicador" más abajo. La lógica de "correr el agente y persistir" vive en una sola función (`agent/services.py::explain_and_persist`), compartida entre este comando y el endpoint `GET /api/scores/<symbol>/explain/` -- ver "API (DRF)".
+- API REST (`api/`, DRF con `APIView`, no `ModelViewSet` genérico -- ningún endpoint es CRUD estándar): expone `market_data`, `scoring` y `agent` vía HTTP. Ver "API (DRF)" más abajo.
 
-Todavía sin Celery/scheduling automático (los tres comandos corren a mano por ahora -- ver sección de scheduling más abajo). Próximo paso: exponer todo esto vía DRF en la app `api` (hoy vacía).
+Todavía sin Celery/scheduling automático (los tres comandos corren a mano por ahora -- ver sección de scheduling más abajo).
 
 ## Modelo de datos
 Implementado (`market_data`):
@@ -57,18 +58,29 @@ Límite duro de 5 iteraciones de tool-calling (evita loop infinito si el modelo 
 
 **Retry con backoff (`_generate_content_with_retry`):** hasta 3 reintentos con backoff exponencial + jitter (2s, 4s, 8s) **solo** ante un 503/`UNAVAILABLE` de Gemini (`google.genai.errors.ServerError` con `code == 503`) -- se confirmó en una corrida real (2026-09-16) que el modelo puede devolver esto por sobrecarga transitoria del lado de Google, sin que el proyecto haya hecho nada mal. Cualquier otro error (401 `UNAUTHENTICATED`, 400, etc. -- subclases de `google.genai.errors.ClientError`) falla inmediato como `AgentError`: no son transitorios, reintentarlos sería solo ruido y demora. Mismo criterio que `01-etl-data-pipeline` aplica a sus reintentos de yfinance: reintentar únicamente lo que es efectivamente transitorio, nunca un error de configuración o de datos.
 
+## API (DRF)
+4 endpoints en `api/`, todos `APIView` (no `ModelViewSet` genérico -- la lógica de cada uno no es CRUD estándar):
+- `GET /api/watchlist/` -- lista todos los `Watchlist` con sus tickers.
+- `POST /api/watchlist/<int:pk>/refresh/` -- para cada `Ticker` del watchlist corre `load_prices_for_ticker` (90 días) y después `compute_score`; devuelve un resumen JSON (`tickers_procesados`, `errores_de_precio`, `scores_actualizados`, `omitidos_por_falta_de_historico`) -- mismo espíritu que el resumen de los management commands, como response en vez de stdout. Un ticker roto no tumba el resto. 404 si el watchlist no existe.
+- `GET /api/scores/<str:symbol>/` -- el `Score` más reciente de ese ticker (symbol normalizado a upper). Dos 404 distintos con mensaje distinto: ticker inexistente vs. ticker sin ningún `Score` calculado todavía.
+- `GET /api/scores/<str:symbol>/explain/` -- llama a `explain_and_persist(symbol)` y devuelve el `AgentExplanation` serializado. 404 si no hay `Score` (no se pudo persistir); **502** (nunca un 500 crudo) si `explain_and_persist` propaga `AgentError` (Gemini agotó reintentos, o `GEMINI_API_KEY` faltante).
+
+**Decisión de diseño (intencional):** `/explain/` llama a Gemini de forma **síncrona** dentro del request-response -- el loop de tool-calling son 2-4 round trips y puede tardar varios segundos. Para un portafolio de demo esto es aceptable (mover esto a async/Celery queda para la fase de hardening, si hace falta), pero por eso mismo hay que protegerlo con throttling agresivo: cada llamada consume cupo real del free tier de Gemini, y un scraper o bot pegándole a este endpoint en producción puede agotar la cuota del día para todo el proyecto.
+
+**Throttling:** `api/throttling.py::AgentExplainThrottle` (subclase de `AnonRateThrottle`, scope `"agent_explain"`) aplica **solo** en `/explain/`, vía `DEFAULT_THROTTLE_RATES = {"agent_explain": "5/hour"}` en `settings.py`. Los otros 3 endpoints no tienen throttle propio -- solo leen de la base o corren yfinance (sin límite de cuota de terceros con costo real), así que no necesitan un límite tan agresivo.
+
 ## Scheduling de la ingesta y el scoring
 `load_prices`, `compute_scores` y `explain_score` corren a mano por ahora. La arquitectura de scheduling automático (Celery + django-celery-beat) se implementa recién en la fase de hardening, replicando la decisión ya documentada en `01-etl-data-pipeline/README.md`: Celery Beat queda como diseño, pero lo que efectivamente dispara la ingesta/scoring en producción es un cron de GitHub Actions llamando a los management commands directo (sin worker ni broker) -- un worker de Celery Beat 24/7 no entra en el free tier de Render.
 
 ## Apps Django
-`market_data` (con modelos), `scoring`, `agent`, `api` (las últimas tres vacías por ahora, solo esqueleto de app)
+`market_data`, `scoring`, `agent`, `api` -- las 4 con modelos y/o vistas implementados (ver secciones arriba).
 
 ## Endpoints principales
-Ninguno implementado todavía (`api` está vacía). Planeados para próximos pasos:
+Los 4 implementados -- ver "API (DRF)" arriba para el detalle:
 - `GET /api/watchlist/`
-- `POST /api/watchlist/{id}/refresh/`
-- `GET /api/scores/{ticker}/`
-- `GET /api/scores/{ticker}/explain/` (dispara el agente)
+- `POST /api/watchlist/<int:pk>/refresh/`
+- `GET /api/scores/<str:symbol>/`
+- `GET /api/scores/<str:symbol>/explain/` (dispara el agente, throttled 5/hora)
 
 ## Flujo del agente de IA (pieza de mayor señal de este repo) -- implementado
 Request → el agente recibe el ticker → invoca tools internas propias (`get_price_history`, `get_technical_indicators`, `get_recent_news`) → el LLM redacta la explicación con esos datos → se persiste como `AgentExplanation` y se devuelve. Ver "Agente explicador" arriba para el detalle de implementación.

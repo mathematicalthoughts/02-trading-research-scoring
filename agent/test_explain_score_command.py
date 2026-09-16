@@ -1,8 +1,8 @@
 """
 Tests del management command explain_score. Mockea
-agent.management.commands.explain_score.explain_score (el límite entre
-el comando y el agente) -- la lógica de explain_score en sí ya está
-cubierta en test_services.py.
+agent.management.commands.explain_score.explain_and_persist (el límite
+entre el comando y el agente) -- la lógica de explain_and_persist en sí
+ya está cubierta en test_services.py.
 """
 
 import datetime
@@ -23,45 +23,57 @@ class ExplainScoreCommandTests(TestCase):
     def setUp(self):
         self.ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
 
-    def test_persists_agent_explanation_when_score_exists(self):
-        Score.objects.create(
+    def test_prints_texto_and_tool_calls_when_persisted(self):
+        score = Score.objects.create(
             ticker=self.ticker, date=datetime.date(2026, 1, 1), score=70, components={}
         )
-        fake_result = {
-            "texto": "AAPL tiene tendencia alcista.",
-            "tool_calls": [{"tool": "get_technical_indicators", "args": {"symbol": "AAPL"}}],
-        }
+        explanation = AgentExplanation.objects.create(
+            score=score,
+            texto="AAPL tiene tendencia alcista.",
+            tool_calls=[{"tool": "get_technical_indicators", "args": {"symbol": "AAPL"}}],
+        )
 
         with patch(
-            "agent.management.commands.explain_score.explain_score",
-            return_value=fake_result,
+            "agent.management.commands.explain_score.explain_and_persist",
+            return_value=(explanation, None),
         ):
             out = StringIO()
             call_command("explain_score", "--symbol=AAPL", stdout=out)
 
-        self.assertEqual(AgentExplanation.objects.count(), 1)
-        explanation = AgentExplanation.objects.get()
-        self.assertEqual(explanation.texto, fake_result["texto"])
-        self.assertEqual(explanation.tool_calls, fake_result["tool_calls"])
         self.assertIn("AAPL tiene tendencia alcista.", out.getvalue())
         self.assertIn("get_technical_indicators", out.getvalue())
+        self.assertIn("AgentExplanation guardada.", out.getvalue())
 
-    def test_does_not_persist_when_no_score_exists(self):
-        fake_result = {"texto": "Sin score todavía.", "tool_calls": []}
+    def test_prints_placeholder_when_no_tools_were_invoked(self):
+        score = Score.objects.create(
+            ticker=self.ticker, date=datetime.date(2026, 1, 1), score=70, components={}
+        )
+        explanation = AgentExplanation.objects.create(
+            score=score, texto="texto sin tools.", tool_calls=[]
+        )
 
         with patch(
-            "agent.management.commands.explain_score.explain_score",
-            return_value=fake_result,
+            "agent.management.commands.explain_score.explain_and_persist",
+            return_value=(explanation, None),
+        ):
+            out = StringIO()
+            call_command("explain_score", "--symbol=AAPL", stdout=out)
+
+        self.assertIn("(ninguna)", out.getvalue())
+
+    def test_reports_error_when_no_score_exists(self):
+        with patch(
+            "agent.management.commands.explain_score.explain_and_persist",
+            return_value=(None, "No hay Score persistido para 'AAPL' -- ..."),
         ):
             err = StringIO()
             call_command("explain_score", "--symbol=AAPL", stdout=StringIO(), stderr=err)
 
-        self.assertEqual(AgentExplanation.objects.count(), 0)
         self.assertIn("No hay Score persistido", err.getvalue())
 
     def test_agent_error_is_reported_without_crashing(self):
         with patch(
-            "agent.management.commands.explain_score.explain_score",
+            "agent.management.commands.explain_score.explain_and_persist",
             side_effect=AgentError("GEMINI_API_KEY no está configurada"),
         ):
             err = StringIO()

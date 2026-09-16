@@ -130,6 +130,22 @@ GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-3.6-flash")
 
 
+# Django REST Framework
+# Throttling agresivo SOLO en GET /api/scores/<symbol>/explain/ (ver
+# api/throttling.py::AgentExplainThrottle) -- ese endpoint corre
+# explain_score de forma síncrona dentro del request-response, y cada
+# llamada consume cupo real del free tier de Gemini. Un scraper o bot
+# pegándole en producción puede agotar la cuota del día para todo el
+# proyecto, así que el límite es deliberadamente bajo (5/hora por IP
+# anónima) -- mucho más restrictivo que cualquier otro endpoint de esta
+# API, que solo leen de la propia base o corren yfinance.
+REST_FRAMEWORK = {
+    "DEFAULT_THROTTLE_RATES": {
+        "agent_explain": "5/hour",
+    },
+}
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

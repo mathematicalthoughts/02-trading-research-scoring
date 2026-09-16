@@ -1,9 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from scoring.models import Score
-
-from ...models import AgentExplanation
-from ...services import AgentError, explain_score
+from ...services import AgentError, explain_and_persist
 
 
 class Command(BaseCommand):
@@ -20,34 +17,22 @@ class Command(BaseCommand):
         symbol = options["symbol"].strip().upper()
 
         try:
-            result = explain_score(symbol)
+            explanation, error = explain_and_persist(symbol)
         except AgentError as exc:
             self.stderr.write(self.style.ERROR(str(exc)))
             return
 
-        self.stdout.write(result["texto"])
+        if error:
+            self.stderr.write(self.style.WARNING(error))
+            return
+
+        self.stdout.write(explanation.texto)
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS("Tools invocadas:"))
-        if result["tool_calls"]:
-            for call in result["tool_calls"]:
+        if explanation.tool_calls:
+            for call in explanation.tool_calls:
                 self.stdout.write(f"  - {call['tool']}({call['args']})")
         else:
             self.stdout.write("  (ninguna)")
 
-        latest_score = Score.objects.filter(ticker__symbol=symbol).order_by("-date").first()
-        if latest_score is None:
-            self.stderr.write(
-                self.style.WARNING(
-                    f"No hay Score persistido para '{symbol}' -- la "
-                    "explicación no se guardó como AgentExplanation "
-                    "(corré compute_scores primero)."
-                )
-            )
-            return
-
-        AgentExplanation.objects.create(
-            score=latest_score,
-            texto=result["texto"],
-            tool_calls=result["tool_calls"],
-        )
         self.stdout.write(self.style.SUCCESS("AgentExplanation guardada."))
