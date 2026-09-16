@@ -11,7 +11,7 @@
     <a class="btn-app btn-app--secondary" href="{% url 'dashboard:ticker-detail' ticker.symbol %}">Volver a {{ ticker.symbol }}</a>
   </div>
 
-  <section class="card">
+  <section class="panel">
     <form method="get" class="cluster" action="{% url 'dashboard:ticker-backtest' ticker.symbol %}">
       <div class="field" style="margin-bottom: 0;">
         <label for="horizon_days">Horizonte (sesiones de trading)</label>
@@ -22,14 +22,14 @@
   </section>
 
   {% if result.reason %}
-    <div class="card empty-state">
+    <div class="panel empty-state">
       <h3>No se pudo correr el backtest</h3>
       <p>{{ result.reason }}</p>
     </div>
   {% else %}
-    <section class="card">
-      <div class="card__header">
-        <h2 class="card__title">Retorno promedio por bucket de score</h2>
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">Retorno promedio por bucket de score</h2>
         <span class="text-muted-token mono">{{ result.total_points }} punto(s)</span>
       </div>
 

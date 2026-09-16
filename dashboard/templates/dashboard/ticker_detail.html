@@ -12,14 +12,14 @@
   </div>
 
   {% if not latest_score %}
-    <div class="card empty-state">
+    <div class="panel empty-state">
       <h3>Todavía no hay un score calculado para {{ ticker.symbol }}</h3>
       <p>Corré <code>python manage.py compute_scores --tickers={{ ticker.symbol }}</code> (necesita al menos 50 <code>PriceBar</code> cargados) y volvé a esta página.</p>
     </div>
   {% else %}
-    <section class="card">
-      <div class="card__header">
-        <h2 class="card__title">Score técnico</h2>
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">Score técnico</h2>
         <span class="score-pill {{ score_band_class }}">{{ latest_score.score }} / 100</span>
       </div>
       <p class="text-muted-token">Calculado el {{ latest_score.date }}.</p>
@@ -36,9 +36,9 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card__header">
-        <h2 class="card__title">Agente explicador</h2>
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">Agente explicador</h2>
       </div>
 
       {% if explanation %}
@@ -65,9 +65,9 @@
     </section>
   {% endif %}
 
-  <section class="card">
-    <div class="card__header">
-      <h2 class="card__title">Precio &amp; medias móviles</h2>
+  <section class="panel">
+    <div class="panel__header">
+      <h2 class="panel__title">Precio &amp; medias móviles</h2>
     </div>
 
     {% if chart_data %}

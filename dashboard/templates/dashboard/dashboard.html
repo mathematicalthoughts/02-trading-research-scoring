@@ -7,16 +7,16 @@
   <p class="text-muted-token">Watchlists y el score técnico más reciente de cada ticker.</p>
 
   {% if not watchlists %}
-    <div class="card empty-state">
+    <div class="panel empty-state">
       <h3>Todavía no hay ningún watchlist</h3>
       <p>Cargá un <code>Watchlist</code> y algún <code>Ticker</code> desde el admin de Django para empezar.</p>
     </div>
   {% endif %}
 
   {% for entry in watchlists %}
-    <section class="card">
-      <div class="card__header">
-        <h2 class="card__title">{{ entry.watchlist.name }}</h2>
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">{{ entry.watchlist.name }}</h2>
         <form method="post" action="{% url 'dashboard:dashboard' %}">
           {% csrf_token %}
           <input type="hidden" name="watchlist_id" value="{{ entry.watchlist.id }}">

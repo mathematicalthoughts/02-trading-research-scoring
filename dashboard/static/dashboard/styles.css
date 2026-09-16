@@ -1,8 +1,10 @@
 /*
-  Sistema visual del dashboard. Bootstrap (CDN) se usa SOLO como base de
-  grid/reset/responsive (container, row, col-*, d-flex, etc.) -- todo el
-  look final (color, tipografía, radios, bordes) sale de este archivo.
-  Ver CLAUDE.md, sección "Frontend", para el detalle de la decisión.
+  Sistema visual del dashboard. Bootstrap se sacó del proyecto (ver
+  CLAUDE.md, sección "Frontend"): ningún template usaba su grid/utilidades
+  -- todo el layout es propio (.app-shell, .rail, .content) -- y su CSS
+  pisaba el color de texto dentro de .card vía `color: var(--bs-body-color)`
+  (fijo en el claro de Bootstrap, nunca actualizado a dark) porque nuestra
+  clase no definía `color` explícito. Todo el look sale de este archivo.
 */
 
 :root {
@@ -98,8 +100,15 @@ h1, h2, h3, h4, .heading {
   margin: 0 0 var(--space-2);
 }
 
+h1 {
+  font-size: 1.4rem;
+}
+
+/* h2 de cada sección: tratamiento "eyebrow" de dashboard, no título de
+   documento -- ver .panel__title en "Panels" más abajo para el tamaño. */
 h3, h4 {
   font-weight: 600;
+  font-size: 0.95rem;
 }
 
 p {
@@ -257,9 +266,10 @@ textarea:focus-visible,
   }
 }
 
-/* --- Cards --- */
+/* --- Panels ("card" evitado a propósito: colisionaba con el .card de
+   Bootstrap -- ver CLAUDE.md, sección "Frontend") --- */
 
-.card {
+.panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
@@ -268,7 +278,7 @@ textarea:focus-visible,
   margin-bottom: var(--space-5);
 }
 
-.card__header {
+.panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -277,11 +287,15 @@ textarea:focus-visible,
   flex-wrap: wrap;
 }
 
-.card__title {
+.panel__title {
   margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
 }
 
-.card--tight {
+.panel--tight {
   padding: var(--space-4);
 }
 
