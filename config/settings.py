@@ -115,6 +115,21 @@ DATABASES = {
 }
 
 
+# Gemini API (agente explicador con tool-calling real -- ver agent/services.py)
+# SDK oficial: google-genai (`from google import genai`). google-generativeai
+# (el paquete anterior) está deprecado, EOL 2025-11-30 -- confirmado en PyPI
+# antes de agregar la dependencia, no asumido.
+
+GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
+# 01-etl-data-pipeline usa gemini-3.8-flash por default, pero en pruebas
+# reales contra este proyecto (2026-09-16) ese modelo devolvió 503
+# UNAVAILABLE ("high demand") de forma persistente, mientras que
+# gemini-2.5-flash directamente dejó de estar disponible para API keys
+# nuevas (404, la propia API recomienda migrar) -- gemini-3.6-flash es el
+# que la API sugirió y el que efectivamente respondió en la corrida real.
+GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-3.6-flash")
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 

@@ -4,6 +4,7 @@ psycopg[binary]>=3.1
 dj-database-url>=2.2
 python-decouple>=3.8
 yfinance>=0.2
+google-genai>=1.0
 gunicorn>=22.0
 whitenoise>=6.7
 
