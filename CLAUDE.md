@@ -17,12 +17,13 @@ Esqueleto del proyecto: Django + DRF configurados, modelos base de `market_data`
 
 ## Modelo de datos
 Implementado (`market_data`):
-- `Ticker(symbol, name)`
+- `Ticker(symbol, name, exchange, sector, active)`
 - `Watchlist(name)`
 - `WatchlistItem(watchlist, ticker)` -- unique constraint por (watchlist, ticker)
+- `PriceBar(ticker, date, open, high, low, close, volume)` -- unique constraint por (ticker, date), orden por fecha descendente
 
 Pendiente (próximos pasos, referencia de diseño):
-- `PriceBar(ticker, date, ohlcv)` (`market_data`)
+- Ingesta real de `PriceBar` (todavía no hay ningún job/comando que cargue precios)
 - `Score(ticker, fecha, score, componentes_json)` (`scoring`)
 - `AgentExplanation(score_id, texto, timestamp)` (`agent`)
 
