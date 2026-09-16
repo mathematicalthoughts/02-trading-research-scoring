@@ -1,0 +1,63 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+  <h1>Dashboard</h1>
+  <p class="text-muted-token">Watchlists y el score técnico más reciente de cada ticker.</p>
+
+  {% if not watchlists %}
+    <div class="card empty-state">
+      <h3>Todavía no hay ningún watchlist</h3>
+      <p>Cargá un <code>Watchlist</code> y algún <code>Ticker</code> desde el admin de Django para empezar.</p>
+    </div>
+  {% endif %}
+
+  {% for entry in watchlists %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">{{ entry.watchlist.name }}</h2>
+        <form method="post" action="{% url 'dashboard:dashboard' %}">
+          {% csrf_token %}
+          <input type="hidden" name="watchlist_id" value="{{ entry.watchlist.id }}">
+          <button type="submit" class="btn-app btn-app--primary">Refrescar precios</button>
+        </form>
+      </div>
+
+      {% if not entry.tickers %}
+        <p class="text-muted-token">Este watchlist todavía no tiene tickers.</p>
+      {% else %}
+        <div style="overflow-x:auto;">
+          <table class="table-app">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Nombre</th>
+                <th>Score</th>
+                <th>Fecha del score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in entry.tickers %}
+                <tr>
+                  <td>
+                    <a class="ticker-link" href="{% url 'dashboard:ticker-detail' row.ticker.symbol %}">{{ row.ticker.symbol }}</a>
+                  </td>
+                  <td>{{ row.ticker.name }}</td>
+                  <td>
+                    {% if row.score %}
+                      <span class="score-pill {{ row.band_class }}">{{ row.score.score }}</span>
+                    {% else %}
+                      <span class="score-pill score-pill--empty">sin score</span>
+                    {% endif %}
+                  </td>
+                  <td class="mono">{% if row.score %}{{ row.score.date }}{% else %}—{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </section>
+  {% endfor %}
+{% endblock %}

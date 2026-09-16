@@ -1,0 +1,87 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Backtest {{ ticker.symbol }}{% endblock %}
+
+{% block content %}
+  <div class="cluster" style="justify-content: space-between; margin-bottom: var(--space-4);">
+    <div>
+      <h1 class="mono">Backtest · {{ ticker.symbol }}</h1>
+      <p class="text-muted-token">Score técnico contra retorno real, {{ horizon_days }} sesiones de trading después.</p>
+    </div>
+    <a class="btn-app btn-app--secondary" href="{% url 'dashboard:ticker-detail' ticker.symbol %}">Volver a {{ ticker.symbol }}</a>
+  </div>
+
+  <section class="card">
+    <form method="get" class="cluster" action="{% url 'dashboard:ticker-backtest' ticker.symbol %}">
+      <div class="field" style="margin-bottom: 0;">
+        <label for="horizon_days">Horizonte (sesiones de trading)</label>
+        <input type="number" id="horizon_days" name="horizon_days" min="1" max="120" value="{{ horizon_days }}">
+      </div>
+      <button type="submit" class="btn-app btn-app--primary" style="align-self: flex-end;">Correr backtest</button>
+    </form>
+  </section>
+
+  {% if result.reason %}
+    <div class="card empty-state">
+      <h3>No se pudo correr el backtest</h3>
+      <p>{{ result.reason }}</p>
+    </div>
+  {% else %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">Retorno promedio por bucket de score</h2>
+        <span class="text-muted-token mono">{{ result.total_points }} punto(s)</span>
+      </div>
+
+      <div class="chart-container chart-container--compact">
+        <canvas id="backtestChart" role="img" aria-label="Retorno promedio por bucket de score, barras divergentes alrededor de cero"></canvas>
+      </div>
+      {{ chart_data|json_script:"backtestChartData" }}
+
+      <div style="overflow-x:auto; margin-top: var(--space-4);">
+        <table class="table-app mono">
+          <thead>
+            <tr>
+              <th>Bucket</th>
+              <th>n</th>
+              <th>Retorno prom.</th>
+              <th>Win rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for label, stats in result.buckets.items %}
+              <tr>
+                <td>{{ label }}</td>
+                <td>{{ stats.n }}</td>
+                <td class="{% if stats.avg_return_pct >= 0 %}delta-positive{% else %}delta-negative{% endif %}">
+                  {{ stats.avg_return_pct|floatformat:2 }}%
+                </td>
+                <td>{{ stats.win_rate_pct|floatformat:1 }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="limitations">
+    <h4>Limitaciones de este backtest (ingenuo, a propósito)</h4>
+    <ul>
+      <li>Un solo ticker por corrida, no una cartera ni un universo diversificado.</li>
+      <li>Sin costos de transacción ni slippage: el retorno es cierre a cierre, nada más.</li>
+      <li>No es point-in-time real: usa el ticker tal como existe hoy, no reconstruye qué tickers formaban un watchlist o índice en el pasado.</li>
+      <li>Muestra chica y variable según cuánta historia real tenga el ticker -- con pocos puntos por bucket, esto es una señal direccional, no un backtest de nivel institucional.</li>
+    </ul>
+  </section>
+{% endblock %}
+
+{% block extra_js %}
+{% if chart_data %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    initBacktestChart("backtestChart", "backtestChartData");
+  });
+</script>
+{% endif %}
+{% endblock %}

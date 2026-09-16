@@ -1,0 +1,107 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}{{ ticker.symbol }}{% endblock %}
+
+{% block content %}
+  <div class="cluster" style="justify-content: space-between; margin-bottom: var(--space-4);">
+    <div>
+      <h1 class="mono">{{ ticker.symbol }}</h1>
+      <p class="text-muted-token">{{ ticker.name }}{% if ticker.exchange %} · {{ ticker.exchange }}{% endif %}</p>
+    </div>
+    <a class="btn-app btn-app--secondary" href="{% url 'dashboard:ticker-backtest' ticker.symbol %}">Ver backtest</a>
+  </div>
+
+  {% if not latest_score %}
+    <div class="card empty-state">
+      <h3>Todavía no hay un score calculado para {{ ticker.symbol }}</h3>
+      <p>Corré <code>python manage.py compute_scores --tickers={{ ticker.symbol }}</code> (necesita al menos 50 <code>PriceBar</code> cargados) y volvé a esta página.</p>
+    </div>
+  {% else %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">Score técnico</h2>
+        <span class="score-pill {{ score_band_class }}">{{ latest_score.score }} / 100</span>
+      </div>
+      <p class="text-muted-token">Calculado el {{ latest_score.date }}.</p>
+
+      <div class="stack">
+        <table class="table-app mono">
+          <tbody>
+            <tr><td>Tendencia</td><td>{{ latest_score.components.trend_points }} pts</td><td>SMA20</td><td>{{ latest_score.components.sma20|floatformat:2 }}</td></tr>
+            <tr><td>Momentum</td><td>{{ latest_score.components.momentum_points }} pts</td><td>SMA50</td><td>{{ latest_score.components.sma50|floatformat:2 }}</td></tr>
+            <tr><td>Volumen</td><td>{{ latest_score.components.volume_points }} pts</td><td>RSI14</td><td>{{ latest_score.components.rsi14|floatformat:2 }}</td></tr>
+            <tr><td>ATR14 (referencia)</td><td>{{ latest_score.components.atr14|floatformat:2 }}</td><td>Vol. relativo</td><td>{{ latest_score.components.relative_volume|floatformat:2 }}x</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">Agente explicador</h2>
+      </div>
+
+      {% if explanation %}
+        <div class="agent-box">
+          <p class="agent-text">{{ explanation.texto }}</p>
+          <div class="mono">
+            {% for call in explanation.tool_calls %}
+              <span class="agent-trace-item">{{ call.tool }}({{ call.args }})</span>
+            {% empty %}
+              <span class="agent-status">(sin tools invocadas)</span>
+            {% endfor %}
+          </div>
+          <p class="agent-status" style="margin-top: var(--space-3);">Generada el {{ explanation.timestamp }}.</p>
+        </div>
+      {% else %}
+        <p class="text-muted-token">
+          Todavía no se generó una explicación para este score. La llamada real a Gemini
+          (tool-calling real, no un texto fijo) puede tardar varios segundos.
+        </p>
+        <button type="button" id="explainButton" class="btn-app btn-app--primary">Explicar</button>
+        <p id="explainStatus" class="agent-status" role="status" style="margin-top: var(--space-3);"></p>
+        <div id="explainResult"></div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  <section class="card">
+    <div class="card__header">
+      <h2 class="card__title">Precio &amp; medias móviles</h2>
+    </div>
+
+    {% if chart_data %}
+      <div class="chart-container">
+        <canvas id="priceChart" role="img" aria-label="Precio de cierre de {{ ticker.symbol }} con SMA20 y SMA50"></canvas>
+      </div>
+      <div class="chart-legend">
+        <span><span class="chart-legend__swatch" style="background: var(--color-chart-price);"></span>Cierre</span>
+        <span><span class="chart-legend__swatch" style="background: var(--color-chart-sma20);"></span>SMA20</span>
+        <span><span class="chart-legend__swatch" style="background: var(--color-chart-sma50);"></span>SMA50</span>
+      </div>
+      {{ chart_data|json_script:"priceChartData" }}
+    {% else %}
+      <p class="text-muted-token">
+        Todavía no hay histórico de precios (<code>PriceBar</code>) para {{ ticker.symbol }} --
+        corré <code>python manage.py load_prices --tickers={{ ticker.symbol }}</code> primero.
+      </p>
+    {% endif %}
+  </section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    {% if chart_data %}
+    initPriceChart("priceChart", "priceChartData");
+    {% endif %}
+    {% if latest_score and not explanation %}
+    explainScore("{{ ticker.symbol }}", {
+      buttonId: "explainButton",
+      statusId: "explainStatus",
+      resultId: "explainResult",
+    });
+    {% endif %}
+  });
+</script>
+{% endblock %}

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import sys
 from pathlib import Path
 
 import dj_database_url
@@ -55,6 +56,7 @@ INSTALLED_APPS = [
     "backtesting",
     "agent",
     "api",
+    "dashboard",
 ]
 
 MIDDLEWARE = [
@@ -80,6 +82,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "dashboard.context_processors.nav_watchlists",
             ],
         },
     },
@@ -187,9 +190,19 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# CompressedManifestStaticFilesStorage necesita el manifest que genera
+# `collectstatic` en el build de Render -- en dev local y en tests ese
+# manifest no existe, así que {% static %} (usado por dashboard/) rompería
+# con "Missing staticfiles manifest entry". TESTING detecta pytest igual
+# que en 01-etl-data-pipeline; DEBUG cubre runserver local.
+TESTING = "pytest" in sys.modules
 STORAGES = {
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if DEBUG or TESTING
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
     },
 }
 
