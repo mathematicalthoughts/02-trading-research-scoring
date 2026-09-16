@@ -11,12 +11,25 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from market_data.models import PriceBar, Ticker
 from scoring.models import Score
 
-from .services import MAX_TOOL_CALL_ITERATIONS, AgentError, explain_score
+from .services import MAX_GEMINI_RETRIES, MAX_TOOL_CALL_ITERATIONS, AgentError, explain_score
+
+
+def _service_unavailable_error():
+    return genai_errors.ServerError(
+        503, {"error": {"status": "UNAVAILABLE", "message": "high demand"}}
+    )
+
+
+def _unauthenticated_error():
+    return genai_errors.ClientError(
+        401, {"error": {"status": "UNAUTHENTICATED", "message": "bad api key"}}
+    )
 
 
 def _fake_response(function_calls=None, text=""):
@@ -137,6 +150,59 @@ class ExplainScoreToolCallingTests(TestCase):
                 explain_score("AAPL")
 
         self.assertIn("Gemini", str(ctx.exception))
+
+    def test_retries_on_503_and_succeeds_on_third_attempt(self):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            _service_unavailable_error(),
+            _service_unavailable_error(),
+            _fake_response(text="AAPL tiene un score sólido."),
+        ]
+
+        with patch("agent.services.genai.Client", return_value=mock_client), patch(
+            "agent.services.time.sleep"
+        ) as mock_sleep:
+            result = explain_score("AAPL")
+
+        self.assertEqual(result["texto"], "AAPL tiene un score sólido.")
+        self.assertEqual(mock_client.models.generate_content.call_count, 3)
+        # Se reintentó 2 veces (las 2 fallas 503) antes del éxito -- cada
+        # reintento espera con backoff, nunca 0 ni negativo.
+        self.assertEqual(mock_sleep.call_count, 2)
+        for call in mock_sleep.call_args_list:
+            self.assertGreater(call.args[0], 0)
+
+    def test_exhausting_all_retries_on_persistent_503_raises_agent_error(self):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            _service_unavailable_error() for _ in range(MAX_GEMINI_RETRIES + 1)
+        ]
+
+        with patch("agent.services.genai.Client", return_value=mock_client), patch(
+            "agent.services.time.sleep"
+        ):
+            with self.assertRaises(AgentError) as ctx:
+                explain_score("AAPL")
+
+        self.assertEqual(
+            mock_client.models.generate_content.call_count, MAX_GEMINI_RETRIES + 1
+        )
+        self.assertIn("UNAVAILABLE", str(ctx.exception))
+
+    def test_non_retryable_error_fails_immediately_without_retrying(self):
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = _unauthenticated_error()
+
+        with patch("agent.services.genai.Client", return_value=mock_client), patch(
+            "agent.services.time.sleep"
+        ) as mock_sleep:
+            with self.assertRaises(AgentError) as ctx:
+                explain_score("AAPL")
+
+        # Un solo intento -- un 401 no es transitorio, no se reintenta.
+        self.assertEqual(mock_client.models.generate_content.call_count, 1)
+        mock_sleep.assert_not_called()
+        self.assertIn("UNAUTHENTICATED", str(ctx.exception))
 
     def test_non_converging_loop_is_cut_at_max_iterations(self):
         mock_client = MagicMock()

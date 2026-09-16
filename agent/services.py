@@ -12,9 +12,12 @@ vigente; el paquete anterior, google-generativeai, está deprecado (EOL
 """
 
 import logging
+import random
+import time
 
 from django.conf import settings
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from .tools import get_price_history, get_recent_news, get_technical_indicators
@@ -22,6 +25,47 @@ from .tools import get_price_history, get_recent_news, get_technical_indicators
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_CALL_ITERATIONS = 5
+
+# Retry con backoff exponencial + jitter, SOLO para 503/UNAVAILABLE de
+# Gemini (sobrecarga transitoria del servidor -- confirmado en una
+# corrida real contra la API, ver CLAUDE.md). Cualquier otro error (401,
+# 400, etc.) no es transitorio: reintentarlo sería solo ruido, así que
+# se propaga de inmediato como AgentError, sin pasar por acá.
+MAX_GEMINI_RETRIES = 3  # reintentos además del intento inicial (4 intentos en total)
+RETRY_BACKOFF_BASE_SECONDS = 2  # 2s, 4s, 8s (más jitter)
+
+
+def _is_retryable_unavailable_error(exc: Exception) -> bool:
+    return isinstance(exc, genai_errors.ServerError) and getattr(exc, "code", None) == 503
+
+
+def _generate_content_with_retry(client, *, model, contents, config):
+    """
+    client.models.generate_content con reintentos SOLO ante un
+    503/UNAVAILABLE. Cualquier otra excepción (incluido un 4xx de
+    genai_errors.ClientError) se propaga en el primer intento, sin
+    reintentar.
+    """
+    total_attempts = MAX_GEMINI_RETRIES + 1
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            return client.models.generate_content(model=model, contents=contents, config=config)
+        except genai_errors.APIError as exc:
+            is_last_attempt = attempt == total_attempts
+            if not _is_retryable_unavailable_error(exc) or is_last_attempt:
+                raise
+
+            delay = (RETRY_BACKOFF_BASE_SECONDS**attempt) + random.uniform(0, 1)
+            logger.warning(
+                "explain_score: Gemini 503/UNAVAILABLE (intento %s de %s), "
+                "reintentando en %.1fs",
+                attempt,
+                total_attempts,
+                delay,
+            )
+            time.sleep(delay)
+
 
 _TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
@@ -139,8 +183,8 @@ def explain_score(symbol: str) -> dict:
 
     for _ in range(MAX_TOOL_CALL_ITERATIONS):
         try:
-            response = client.models.generate_content(
-                model=settings.GEMINI_MODEL, contents=contents, config=config
+            response = _generate_content_with_retry(
+                client, model=settings.GEMINI_MODEL, contents=contents, config=config
             )
         except Exception as exc:
             raise AgentError(f"Error llamando a la API de Gemini: {exc}") from exc

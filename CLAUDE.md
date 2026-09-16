@@ -55,6 +55,8 @@ Tools disponibles (`agent/tools.py`, nunca lanzan excepción, devuelven `{"error
 
 Límite duro de 5 iteraciones de tool-calling (evita loop infinito si el modelo no converge). SDK: **`google-genai`** (`from google import genai`) -- confirmado en PyPI antes de agregarlo: es el paquete activamente mantenido (2.23.0 al momento de esta decisión); el paquete anterior, `google-generativeai`, está deprecado (EOL 2025-11-30).
 
+**Retry con backoff (`_generate_content_with_retry`):** hasta 3 reintentos con backoff exponencial + jitter (2s, 4s, 8s) **solo** ante un 503/`UNAVAILABLE` de Gemini (`google.genai.errors.ServerError` con `code == 503`) -- se confirmó en una corrida real (2026-09-16) que el modelo puede devolver esto por sobrecarga transitoria del lado de Google, sin que el proyecto haya hecho nada mal. Cualquier otro error (401 `UNAUTHENTICATED`, 400, etc. -- subclases de `google.genai.errors.ClientError`) falla inmediato como `AgentError`: no son transitorios, reintentarlos sería solo ruido y demora. Mismo criterio que `01-etl-data-pipeline` aplica a sus reintentos de yfinance: reintentar únicamente lo que es efectivamente transitorio, nunca un error de configuración o de datos.
+
 ## Scheduling de la ingesta y el scoring
 `load_prices`, `compute_scores` y `explain_score` corren a mano por ahora. La arquitectura de scheduling automático (Celery + django-celery-beat) se implementa recién en la fase de hardening, replicando la decisión ya documentada en `01-etl-data-pipeline/README.md`: Celery Beat queda como diseño, pero lo que efectivamente dispara la ingesta/scoring en producción es un cron de GitHub Actions llamando a los management commands directo (sin worker ni broker) -- un worker de Celery Beat 24/7 no entra en el free tier de Render.
 
