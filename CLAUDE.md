@@ -19,6 +19,7 @@ Django + DRF configurados, modelos de `market_data`, `scoring` y `agent` con sus
 - Motor de scoring (comando manual): `python manage.py compute_scores [--tickers=AAPL,MSFT]` calcula el `Score` técnico (0-100) de cada ticker a partir de sus `PriceBar` y hace upsert idempotente en `Score` por (ticker, fecha=hoy). Requiere al menos 50 `PriceBar` por ticker (lo que pide SMA50); si no alcanza, loguea el motivo y sigue con el resto sin romper la corrida.
 - Agente explicador (comando manual): `python manage.py explain_score --symbol=AAPL` corre tool-calling real sobre Gemini (el modelo decide qué tools invocar) y persiste el resultado como `AgentExplanation`. Ver "Agente explicador" más abajo. La lógica de "correr el agente y persistir" vive en una sola función (`agent/services.py::explain_and_persist`), compartida entre este comando y el endpoint `GET /api/scores/<symbol>/explain/` -- ver "API (DRF)".
 - API REST (`api/`, DRF con `APIView`, no `ModelViewSet` genérico -- ningún endpoint es CRUD estándar): expone `market_data`, `scoring` y `agent` vía HTTP. Ver "API (DRF)" más abajo.
+- Backtesting (comando manual): `python manage.py backtest_score --ticker=AAPL [--horizon=10]` corre el backtest ingenuo del `Score` contra retornos reales. Ver "Backtesting" más abajo.
 
 Todavía sin Celery/scheduling automático (los tres comandos corren a mano por ahora -- ver sección de scheduling más abajo).
 
@@ -45,6 +46,19 @@ Implementado (`agent`):
 - **ATR14** se guarda en `components` como referencia de volatilidad (útil para backtesting/stop-loss) pero **no suma ni resta del score** -- no es direccional.
 
 Necesita al menos 50 `PriceBar` (lo que pide SMA50); con menos, `compute_score` devuelve `(None, razón)` sin lanzar excepción.
+
+`scoring/services.py::_compute_score_from_bars(bars)` es la función pura que hace el cálculo real (recibe una lista/queryset de `PriceBar` ya ordenada ascendente, sin tocar la DB); `compute_score(ticker)` es un wrapper delgado que trae los bars del ticker, valida `MIN_BARS_REQUIRED` y delega. Extraída así para que `backtesting/services.py::run_backtest` pueda reusar exactamente la misma matemática del score sin duplicarla -- ver "Backtesting".
+
+## Backtesting
+`backtesting/services.py::run_backtest(ticker, horizon_days=10, bucket_edges=(40,60,80))` -- backtest **ingenuo** del `Score` técnico contra retornos futuros reales, la pieza que separa este proyecto de un dashboard decorativo (ver "Definición de listo para entrevista").
+
+**Metodología:** para cada fecha `d` con al menos `MIN_BARS_REQUIRED` (50) `PriceBar` disponibles hasta `d` inclusive, calcula el score con `_compute_score_from_bars(bars[:i+1])` -- **nunca** con bars posteriores a `d`, cero look-ahead, es la pieza más importante de todo el módulo (probado explícitamente: agregar una barra futura con precio absurdo no cambia el score de una fecha anterior). Busca el `PriceBar` `horizon_days` **sesiones de trading** después (no días calendario -- los `PriceBar` ya excluyen fines de semana/feriados) y calcula `forward_return_pct = (close_futuro / close_d - 1) * 100`. Si no hay suficientes bars futuros para una fecha, ese punto se descarta (no se rellena con nada). Agrupa los puntos por bucket de score (`bucket_edges` define los cortes; el último bucket llega hasta 100) y devuelve, por bucket, `n`, retorno promedio y win rate (% de puntos con retorno > 0). Sin historia suficiente para ningún punto, devuelve `{"ticker", "reason"}` en vez de lanzar una excepción.
+
+**Limitaciones -- no se esconden, son señal de madurez reconocerlas en entrevista, no que el backtest sea perfecto:**
+- Un solo ticker por corrida, no una cartera ni un universo diversificado.
+- Sin costos de transacción ni slippage: el retorno es el del precio de cierre a cierre, nada más.
+- No es point-in-time real: usa el `Ticker` tal como existe **hoy** (símbolo, si está activo); no reconstruye qué tickers formaban parte de un índice o watchlist en el pasado, así que no hay supervivencia/sesgo de selección controlado.
+- Muestra chica y variable: la cantidad de puntos depende de cuánta historia real tenga cada ticker (con 90 días de `PriceBar` típicos, salen muy pocos puntos) -- los resultados con pocas observaciones por bucket no son estadísticamente concluyentes, son una señal direccional para justificar la ponderación del score, no un backtest de nivel institucional.
 
 ## Agente explicador
 `agent/services.py::explain_score(symbol)` es tool-calling **real**: el modelo (Gemini) decide qué función invocar y con qué argumentos -- no hay ningún prompt fijo con datos pre-insertados. El loop es manual (`automatic_function_calling` deshabilitado en la SDK) para poder registrar cada llamada, en orden, en `tool_calls` -- esa traza es la prueba de que el tool-calling es real, no un texto fijo.
@@ -73,7 +87,7 @@ Límite duro de 5 iteraciones de tool-calling (evita loop infinito si el modelo 
 `load_prices`, `compute_scores` y `explain_score` corren a mano por ahora. La arquitectura de scheduling automático (Celery + django-celery-beat) se implementa recién en la fase de hardening, replicando la decisión ya documentada en `01-etl-data-pipeline/README.md`: Celery Beat queda como diseño, pero lo que efectivamente dispara la ingesta/scoring en producción es un cron de GitHub Actions llamando a los management commands directo (sin worker ni broker) -- un worker de Celery Beat 24/7 no entra en el free tier de Render.
 
 ## Apps Django
-`market_data`, `scoring`, `agent`, `api` -- las 4 con modelos y/o vistas implementados (ver secciones arriba).
+`market_data`, `scoring`, `backtesting`, `agent`, `api` -- las 5 con modelos y/o lógica implementados (ver secciones arriba). `backtesting` no tiene modelos propios (no persiste corridas, solo calcula y devuelve/imprime).
 
 ## Endpoints principales
 Los 4 implementados -- ver "API (DRF)" arriba para el detalle:
@@ -86,7 +100,7 @@ Los 4 implementados -- ver "API (DRF)" arriba para el detalle:
 Request → el agente recibe el ticker → invoca tools internas propias (`get_price_history`, `get_technical_indicators`, `get_recent_news`) → el LLM redacta la explicación con esos datos → se persiste como `AgentExplanation` y se devuelve. Ver "Agente explicador" arriba para el detalle de implementación.
 
 ## Definición de "listo para entrevista" (Fase 4)
-- Backtesting simple del score contra retornos históricos (aunque sea ingenuo) — es lo que separa este proyecto de un dashboard decorativo.
+- Backtesting simple del score contra retornos históricos (aunque sea ingenuo) — es lo que separa este proyecto de un dashboard decorativo. **Implementado**, ver "Backtesting" arriba (con sus limitaciones documentadas, no escondidas).
 - Tests cubriendo el cálculo de indicadores y el scoring compuesto.
 - Deploy en Render, consumiendo datos idealmente ya limpios del repo 1 (o su propia ingesta si el repo 1 no está listo aún).
 - README explicando el trade-off de diseño del agente (por qué tool-calling y no RAG aquí).

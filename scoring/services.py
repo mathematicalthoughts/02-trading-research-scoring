@@ -69,21 +69,20 @@ def _volume_points(rel_volume):
     return 0
 
 
-def compute_score(ticker):
+def _compute_score_from_bars(bars):
     """
-    Devuelve (score:int, components:dict) si hay suficiente histórico, o
-    (None, razon:str) si `ticker` tiene menos de MIN_BARS_REQUIRED
-    PriceBar -- nunca lanza excepción por falta de datos.
-    """
-    bars = list(ticker.price_bars.order_by("date"))
+    Calcula (score:int, components:dict) a partir de una lista/queryset
+    de PriceBar YA ORDENADA ascendente por fecha -- función pura, no
+    toca la DB y no valida cantidad mínima de barras (eso es
+    responsabilidad de quien llama; ver MIN_BARS_REQUIRED). Asume que
+    quien llama ya garantizó suficiente histórico.
 
-    if len(bars) < MIN_BARS_REQUIRED:
-        reason = (
-            f"'{ticker.symbol}' tiene {len(bars)} barra(s), se necesitan "
-            f"al menos {MIN_BARS_REQUIRED} para calcular SMA50."
-        )
-        logger.info("compute_score: omitido -- %s", reason)
-        return None, reason
+    Extraída de compute_score(ticker) para reusar la misma matemática
+    del score en backtesting/services.py::run_backtest -- ahí se llama
+    una vez por cada fecha de corte, con los bars truncados hasta esa
+    fecha (nunca con bars posteriores: cero look-ahead).
+    """
+    bars = list(bars)
 
     closes = [float(bar.close) for bar in bars]
     volumes = [float(bar.volume) for bar in bars]
@@ -112,3 +111,22 @@ def compute_score(ticker):
     }
 
     return score, components
+
+
+def compute_score(ticker):
+    """
+    Devuelve (score:int, components:dict) si hay suficiente histórico, o
+    (None, razon:str) si `ticker` tiene menos de MIN_BARS_REQUIRED
+    PriceBar -- nunca lanza excepción por falta de datos.
+    """
+    bars = list(ticker.price_bars.order_by("date"))
+
+    if len(bars) < MIN_BARS_REQUIRED:
+        reason = (
+            f"'{ticker.symbol}' tiene {len(bars)} barra(s), se necesitan "
+            f"al menos {MIN_BARS_REQUIRED} para calcular SMA50."
+        )
+        logger.info("compute_score: omitido -- %s", reason)
+        return None, reason
+
+    return _compute_score_from_bars(bars)

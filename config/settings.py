@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "market_data",
     "scoring",
+    "backtesting",
     "agent",
     "api",
 ]
