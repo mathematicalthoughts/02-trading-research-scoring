@@ -129,6 +129,47 @@ function initBacktestChart(canvasId, dataScriptId) {
   });
 }
 
+function initSparkline(canvasId, dataScriptId, trend) {
+  var data = readJsonScript(dataScriptId);
+  var canvas = document.getElementById(canvasId);
+  if (!data || !canvas || typeof Chart === "undefined") {
+    return;
+  }
+
+  var color = trend === "down" ? cssVar("--color-bearish") : cssVar("--color-bullish");
+
+  new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: data.map(function (_, index) {
+        return index;
+      }),
+      datasets: [
+        {
+          data: data,
+          borderColor: color,
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.25,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { display: false },
+        y: { display: false },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+      },
+    },
+  });
+}
+
 // --- Agente explicador ---
 
 function explainScore(symbol, opts) {

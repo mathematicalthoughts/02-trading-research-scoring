@@ -96,6 +96,32 @@ class ExplainScoreToolCallingTests(TestCase):
         self.assertIn("70", result["texto"])
         self.assertEqual(mock_client.models.generate_content.call_count, 3)
 
+    def test_initial_prompt_instructs_model_to_omit_tool_call_syntax(self):
+        """
+        Regresión: el prompt no le decía a Gemini que omitiera los
+        nombres/sintaxis de las tools de la respuesta final, así que
+        aparecían frases tipo "get_technical_indicators({...})" pegadas
+        al texto -- duplicando lo que ya se muestra aparte en
+        agent-trace-item. Esto solo confirma que la INSTRUCCIÓN está en
+        el prompt que se envía; que Gemini efectivamente la respete se
+        verifica a mano contra una corrida real, no con un mock.
+        """
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [
+            _fake_response(text="AAPL tiene un score sólido."),
+        ]
+
+        with patch("agent.services.genai.Client", return_value=mock_client):
+            explain_score("AAPL")
+
+        first_call_kwargs = mock_client.models.generate_content.call_args_list[0].kwargs
+        prompt_text = first_call_kwargs["contents"][0].parts[0].text
+
+        self.assertIn(
+            "no menciones los nombres de las herramientas", prompt_text.lower()
+        )
+        self.assertIn("get_price_history(...)", prompt_text)
+
     def test_ticker_without_score_does_not_crash_and_tool_reports_absence(self):
         Ticker.objects.create(symbol="ZZZ", name="Sin score S.A.")
 

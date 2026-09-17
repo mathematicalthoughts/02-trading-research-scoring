@@ -140,7 +140,11 @@ _PROMPT_TEMPLATE = (
     "Cuando tengas suficiente información, respondé en 3-5 líneas, en "
     "español, explicando el setup técnico del ticker {symbol}: el "
     "score y el porqué (tendencia, momentum, volumen), mencionando el "
-    "ATR como referencia de volatilidad (no como parte del score)."
+    "ATR como referencia de volatilidad (no como parte del score). "
+    "No menciones los nombres de las herramientas ni su sintaxis de "
+    "llamada (por ejemplo, no escribas algo como get_price_history(...)) "
+    "en tu respuesta -- la traza de qué herramientas se usaron ya se "
+    "muestra aparte. Escribí solo el análisis técnico en lenguaje natural."
 )
 
 

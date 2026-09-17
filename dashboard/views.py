@@ -53,6 +53,7 @@ REFRESH_DAYS = 90
 
 CHART_HISTORY_BARS = 200
 CHART_DISPLAY_BARS = 60
+SPARKLINE_POINTS = 20
 
 
 def _price_chart_data(ticker):
@@ -88,11 +89,15 @@ class DashboardView(View):
 
     def get(self, request):
         # Mismo patrón de prefetch_related que api/views.py::WatchlistListView,
-        # extendido con "__scores" para traer el Score más reciente de cada
-        # ticker sin N+1 (Score.Meta.ordering = ["-date"], así que
-        # ticker.scores.all()[0], sobre el queryset ya prefetcheado, no
-        # dispara una query nueva).
-        watchlists = Watchlist.objects.prefetch_related("items__ticker__scores")
+        # extendido con "__scores" y "__price_bars" para traer el Score y el
+        # PriceBar más reciente de cada ticker sin N+1 (Score.Meta.ordering =
+        # ["-date"] y PriceBar.Meta.ordering = ["-date"], así que
+        # ticker.scores.all()[0] / ticker.price_bars.all()[0], sobre el
+        # queryset ya prefetcheado, no disparan una query nueva -- nunca
+        # .first(), que rompe el prefetch cache).
+        watchlists = Watchlist.objects.prefetch_related(
+            "items__ticker__scores", "items__ticker__price_bars"
+        )
 
         watchlists_data = []
         for watchlist in watchlists:
@@ -101,11 +106,14 @@ class DashboardView(View):
                 ticker = item.ticker
                 scores = ticker.scores.all()
                 latest_score = scores[0] if scores else None
+                bars = ticker.price_bars.all()
+                latest_price = bars[0] if bars else None
                 tickers_data.append(
                     {
                         "item_id": item.id,
                         "ticker": ticker,
                         "score": latest_score,
+                        "latest_price": latest_price,
                         "band_class": score_band_class(
                             latest_score.score if latest_score else None
                         ),
@@ -187,6 +195,21 @@ class DashboardView(View):
         return redirect("dashboard:dashboard")
 
 
+def _sparkline(chart_data):
+    """
+    Últimos SPARKLINE_POINTS closes (o menos si hay menos historial) de
+    la MISMA serie "close" que ya devuelve _price_chart_data -- no se
+    repite la query de precios. (None, None) si no hay chart_data (sin
+    histórico todavía) para no mostrar nada ni crashear.
+    """
+    if chart_data is None:
+        return None, None
+
+    closes = chart_data["close"][-SPARKLINE_POINTS:]
+    trend = "up" if closes[-1] >= closes[0] else "down"
+    return closes, trend
+
+
 class TickerDetailView(View):
     template_name = "dashboard/ticker_detail.html"
 
@@ -200,6 +223,9 @@ class TickerDetailView(View):
             # muestra de entrada -- no se gasta cupo de Gemini de más.
             explanation = latest_score.explanations.first()
 
+        chart_data = _price_chart_data(ticker)
+        sparkline_data, sparkline_trend = _sparkline(chart_data)
+
         context = {
             "ticker": ticker,
             "latest_score": latest_score,
@@ -207,7 +233,9 @@ class TickerDetailView(View):
                 latest_score.score if latest_score else None
             ),
             "explanation": explanation,
-            "chart_data": _price_chart_data(ticker),
+            "chart_data": chart_data,
+            "sparkline_data": sparkline_data,
+            "sparkline_trend": sparkline_trend,
         }
         return render(request, self.template_name, context)
 

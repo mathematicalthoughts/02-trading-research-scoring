@@ -8,7 +8,15 @@
       <h1 class="mono">{{ ticker.symbol }}</h1>
       <p class="text-muted-token">{{ ticker.name }}{% if ticker.exchange %} · {{ ticker.exchange }}{% endif %}</p>
     </div>
-    <a class="btn-app btn-app--secondary" href="{% url 'dashboard:ticker-backtest' ticker.symbol %}">Ver backtest</a>
+    <div class="cluster">
+      {% if sparkline_data %}
+        <div class="sparkline-container">
+          <canvas id="sparkline" role="img" aria-label="Mini gráfico de tendencia reciente de {{ ticker.symbol }}"></canvas>
+        </div>
+        {{ sparkline_data|json_script:"sparklineData" }}
+      {% endif %}
+      <a class="btn-app btn-app--secondary" href="{% url 'dashboard:ticker-backtest' ticker.symbol %}">Ver backtest</a>
+    </div>
   </div>
 
   {% if not latest_score %}
@@ -94,6 +102,9 @@
   document.addEventListener("DOMContentLoaded", function () {
     {% if chart_data %}
     initPriceChart("priceChart", "priceChartData");
+    {% endif %}
+    {% if sparkline_data %}
+    initSparkline("sparkline", "sparklineData", "{{ sparkline_trend }}");
     {% endif %}
     {% if latest_score and not explanation %}
     explainScore("{{ ticker.symbol }}", {

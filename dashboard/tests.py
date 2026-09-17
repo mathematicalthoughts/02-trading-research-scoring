@@ -10,7 +10,9 @@ import datetime
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from agent.models import AgentExplanation
@@ -134,6 +136,41 @@ class DashboardViewTests(TestCase):
     def test_refresh_post_unknown_watchlist_returns_404(self):
         response = self.client.post(reverse("dashboard:dashboard"), {"watchlist_id": 9999})
         self.assertEqual(response.status_code, 404)
+
+    def test_price_column_shows_latest_close_or_dash(self):
+        _make_bar(self.aapl, 0, close=150)
+        _make_bar(self.aapl, 1, close=155)  # más reciente por fecha
+
+        response = self.client.get(reverse("dashboard:dashboard"))
+
+        rows_by_symbol = {
+            row["ticker"].symbol: row
+            for row in response.context["watchlists"][0]["tickers"]
+        }
+        self.assertEqual(rows_by_symbol["AAPL"]["latest_price"].close, Decimal("155.0000"))
+        self.assertIsNone(rows_by_symbol["MSFT"]["latest_price"])
+        self.assertContains(response, "$155.00")
+
+    def test_no_n_plus_1_when_watchlist_has_more_tickers(self):
+        # Regresión: agregar "items__ticker__price_bars" al
+        # prefetch_related no debe convertir esto en N+1 -- la cantidad
+        # de queries tiene que ser la misma con 2 tickers que con 4.
+        with CaptureQueriesContext(connection) as ctx_two_tickers:
+            self.client.get(reverse("dashboard:dashboard"))
+
+        googl = Ticker.objects.create(symbol="GOOGL", name="Alphabet Inc.")
+        tsla = Ticker.objects.create(symbol="TSLA", name="Tesla Inc.")
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=googl)
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=tsla)
+        _make_bar(googl, 0, close=100)
+        _make_bar(tsla, 0, close=200)
+
+        with CaptureQueriesContext(connection) as ctx_four_tickers:
+            self.client.get(reverse("dashboard:dashboard"))
+
+        self.assertEqual(
+            len(ctx_two_tickers.captured_queries), len(ctx_four_tickers.captured_queries)
+        )
 
     def test_tickers_are_ranked_by_score_descending_with_none_last(self):
         googl = Ticker.objects.create(symbol="GOOGL", name="Alphabet Inc.")
@@ -527,6 +564,37 @@ class TickerDetailViewTests(TestCase):
 
         self.assertIsNone(response.context["chart_data"])
         self.assertNotContains(response, "priceChartData")
+
+    def test_sparkline_trend_is_up_with_ascending_closes(self):
+        for i in range(60):
+            _make_bar(self.ticker, i, close=100 + i)  # último close > primero
+
+        response = self.client.get(
+            reverse("dashboard:ticker-detail", args=[self.ticker.symbol])
+        )
+
+        self.assertEqual(response.context["sparkline_trend"], "up")
+        self.assertEqual(len(response.context["sparkline_data"]), 20)
+        self.assertContains(response, "sparklineData")
+
+    def test_sparkline_trend_is_down_with_descending_closes(self):
+        for i in range(60):
+            _make_bar(self.ticker, i, close=200 - i)  # último close < primero
+
+        response = self.client.get(
+            reverse("dashboard:ticker-detail", args=[self.ticker.symbol])
+        )
+
+        self.assertEqual(response.context["sparkline_trend"], "down")
+
+    def test_sparkline_is_none_without_price_bars(self):
+        response = self.client.get(
+            reverse("dashboard:ticker-detail", args=[self.ticker.symbol])
+        )
+
+        self.assertIsNone(response.context["sparkline_data"])
+        self.assertIsNone(response.context["sparkline_trend"])
+        self.assertNotContains(response, "sparklineData")
 
 
 class BacktestViewTests(TestCase):

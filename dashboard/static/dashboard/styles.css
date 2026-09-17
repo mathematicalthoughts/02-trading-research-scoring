@@ -595,6 +595,15 @@ textarea:focus-visible,
   height: 260px;
 }
 
+/* Mini gráfico de tendencia (estilo Apple Stocks) en el header de
+   ticker_detail.html -- sin ejes, sin leyenda, solo la línea. */
+.sparkline-container {
+  position: relative;
+  height: 40px;
+  width: 120px;
+  flex-shrink: 0;
+}
+
 .chart-legend {
   display: flex;
   gap: var(--space-4);
