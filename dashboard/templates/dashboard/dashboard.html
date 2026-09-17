@@ -82,15 +82,7 @@
         {% csrf_token %}
         <div class="field" style="margin-bottom: 0;">
           <label for="symbol-{{ entry.watchlist.pk }}">Símbolo</label>
-          <input type="text" id="symbol-{{ entry.watchlist.pk }}" name="symbol" placeholder="AAPL" required style="max-width: 120px;">
-        </div>
-        <div class="field" style="margin-bottom: 0;">
-          <label for="name-{{ entry.watchlist.pk }}">Nombre</label>
-          <input type="text" id="name-{{ entry.watchlist.pk }}" name="name" placeholder="Apple Inc." required>
-        </div>
-        <div class="field" style="margin-bottom: 0;">
-          <label for="exchange-{{ entry.watchlist.pk }}">Exchange</label>
-          <input type="text" id="exchange-{{ entry.watchlist.pk }}" name="exchange" placeholder="NASDAQ" style="max-width: 140px;">
+          <input type="text" id="symbol-{{ entry.watchlist.pk }}" name="symbol" placeholder="NVDA" required style="max-width: 120px;">
         </div>
         <button type="submit" class="btn-app btn-app--secondary">+ Agregar ticker</button>
       </form>

@@ -11,14 +11,7 @@
       <div class="field">
         <label for="{{ form.symbol.id_for_label }}">Símbolo</label>
         {{ form.symbol }}
-      </div>
-      <div class="field">
-        <label for="{{ form.name.id_for_label }}">Nombre</label>
-        {{ form.name }}
-      </div>
-      <div class="field">
-        <label for="{{ form.exchange.id_for_label }}">Exchange (opcional)</label>
-        {{ form.exchange }}
+        <p class="agent-status">Nombre y exchange se resuelven automáticamente vía yfinance.</p>
       </div>
       <div class="cluster">
         <button type="submit" class="btn-app btn-app--primary">Agregar ticker</button>

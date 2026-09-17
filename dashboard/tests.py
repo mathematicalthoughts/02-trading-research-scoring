@@ -15,7 +15,7 @@ from django.urls import reverse
 
 from agent.models import AgentExplanation
 from market_data.models import PriceBar, Ticker, Watchlist, WatchlistItem
-from market_data.services import PriceLoadError
+from market_data.services import PriceLoadError, TickerMetadataError
 from scoring.models import Score
 
 
@@ -88,6 +88,30 @@ class DashboardViewTests(TestCase):
         self.assertIn("2 ticker(s) procesado(s)", messages[0])
         self.assertIn("1 score(s) actualizado(s)", messages[0])
         self.assertIn("1 omitido(s) por falta de histórico", messages[0])
+
+        # Regresión: compute_score(ticker) solo CALCULA, no persiste --
+        # "Refrescar precios" nunca guardaba el Score hasta este fix
+        # (encontrado corriendo el flujo real contra yfinance, no con
+        # pytest). El resumen decía "actualizado" sin haber guardado nada.
+        saved_score = Score.objects.get(ticker=self.aapl)
+        self.assertEqual(saved_score.score, 70)
+        self.assertEqual(saved_score.date, datetime.date.today())
+        self.assertFalse(Score.objects.filter(ticker=self.msft).exists())
+
+    def test_refresh_post_is_idempotent_for_scores(self):
+        with patch("dashboard.views.load_prices_for_ticker"), patch(
+            "dashboard.views.compute_score", return_value=(70, {"trend_points": 40})
+        ):
+            self.client.post(
+                reverse("dashboard:dashboard"), {"watchlist_id": self.watchlist.pk}
+            )
+            self.client.post(
+                reverse("dashboard:dashboard"), {"watchlist_id": self.watchlist.pk}
+            )
+
+        # Correr el refresh dos veces el mismo día actualiza, no duplica.
+        self.assertEqual(Score.objects.filter(ticker=self.aapl).count(), 1)
+        self.assertEqual(Score.objects.get(ticker=self.aapl).score, 70)
 
     def test_refresh_post_with_price_error_does_not_break_the_rest(self):
         def fake_load(ticker, days):
@@ -220,6 +244,12 @@ class WatchlistDeleteViewTests(TestCase):
 
 
 class WatchlistTickerAddViewTests(TestCase):
+    """
+    fetch_ticker_metadata (yfinance) siempre mockeado -- nunca le pega a
+    la red real en tests. Su propia lógica ya tiene test suite en
+    market_data/test_services.py.
+    """
+
     def setUp(self):
         self.watchlist = Watchlist.objects.create(name="Tech")
 
@@ -230,13 +260,18 @@ class WatchlistTickerAddViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "dashboard/watchlist_ticker_add.html")
 
-    def test_post_creates_new_ticker_and_adds_it(self):
-        response = self.client.post(
-            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
-            {"symbol": "aapl", "name": "Apple Inc.", "exchange": "NASDAQ"},
-            follow=True,
-        )
+    def test_post_creates_new_ticker_with_metadata_from_yfinance(self):
+        with patch(
+            "dashboard.views.fetch_ticker_metadata",
+            return_value={"name": "Apple Inc.", "exchange": "NASDAQ"},
+        ) as mock_fetch:
+            response = self.client.post(
+                reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+                {"symbol": "aapl"},
+                follow=True,
+            )
 
+        mock_fetch.assert_called_once_with("AAPL")
         ticker = Ticker.objects.get(symbol="AAPL")
         self.assertEqual(ticker.name, "Apple Inc.")
         self.assertEqual(ticker.exchange, "NASDAQ")
@@ -246,13 +281,31 @@ class WatchlistTickerAddViewTests(TestCase):
         messages = [str(m) for m in response.context["messages"]]
         self.assertIn("agregado a 'Tech'", messages[0])
 
-    def test_post_reuses_existing_ticker_by_symbol(self):
+    def test_post_invalid_symbol_creates_nothing_and_shows_error(self):
+        with patch(
+            "dashboard.views.fetch_ticker_metadata",
+            side_effect=TickerMetadataError("'ZZZINVALID' no parece un ticker válido."),
+        ):
+            response = self.client.post(
+                reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+                {"symbol": "ZZZINVALID"},
+                follow=True,
+            )
+
+        self.assertFalse(Ticker.objects.exists())
+        self.assertFalse(WatchlistItem.objects.exists())
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertIn("No encontramos ese ticker", messages[0])
+
+    def test_post_reuses_existing_ticker_by_symbol_without_overwriting_it(self):
         existing = Ticker.objects.create(symbol="AAPL", name="Apple Inc. (original)")
 
-        self.client.post(
-            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
-            {"symbol": "AAPL", "name": "Otro nombre", "exchange": ""},
-        )
+        with patch("dashboard.views.fetch_ticker_metadata") as mock_fetch:
+            mock_fetch.return_value = {"name": "Otro nombre", "exchange": "NASDAQ"}
+            self.client.post(
+                reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+                {"symbol": "AAPL"},
+            )
 
         self.assertEqual(Ticker.objects.filter(symbol="AAPL").count(), 1)
         existing.refresh_from_db()
@@ -262,11 +315,15 @@ class WatchlistTickerAddViewTests(TestCase):
         ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
         WatchlistItem.objects.create(watchlist=self.watchlist, ticker=ticker)
 
-        response = self.client.post(
-            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
-            {"symbol": "AAPL", "name": "Apple Inc.", "exchange": ""},
-            follow=True,
-        )
+        with patch(
+            "dashboard.views.fetch_ticker_metadata",
+            return_value={"name": "Apple Inc.", "exchange": "NASDAQ"},
+        ):
+            response = self.client.post(
+                reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+                {"symbol": "AAPL"},
+                follow=True,
+            )
 
         self.assertEqual(
             WatchlistItem.objects.filter(watchlist=self.watchlist, ticker=ticker).count(), 1
@@ -277,7 +334,7 @@ class WatchlistTickerAddViewTests(TestCase):
     def test_post_invalid_form_shows_error_message(self):
         response = self.client.post(
             reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
-            {"symbol": "", "name": ""},
+            {"symbol": ""},
             follow=True,
         )
 
@@ -287,8 +344,7 @@ class WatchlistTickerAddViewTests(TestCase):
 
     def test_post_unknown_watchlist_returns_404(self):
         response = self.client.post(
-            reverse("dashboard:watchlist-ticker-add", args=[9999]),
-            {"symbol": "AAPL", "name": "Apple Inc."},
+            reverse("dashboard:watchlist-ticker-add", args=[9999]), {"symbol": "AAPL"}
         )
         self.assertEqual(response.status_code, 404)
 

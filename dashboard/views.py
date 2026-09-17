@@ -19,8 +19,14 @@ from django.views import View
 
 from backtesting.services import DEFAULT_HORIZON_DAYS, run_backtest
 from market_data.models import Ticker, Watchlist, WatchlistItem
-from market_data.services import PriceLoadError, load_prices_for_ticker
+from market_data.services import (
+    PriceLoadError,
+    TickerMetadataError,
+    fetch_ticker_metadata,
+    load_prices_for_ticker,
+)
 from scoring.indicators import sma
+from scoring.models import Score
 from scoring.services import compute_score
 
 from .forms import TickerAddForm, WatchlistForm
@@ -134,10 +140,19 @@ class DashboardView(View):
         api/views.py::WatchlistRefreshView, pero invocando
         load_prices_for_ticker/compute_score directo (no la vista DRF) --
         ver decisión de arquitectura en CLAUDE.md.
+
+        compute_score(ticker) SOLO calcula, no persiste -- hay que hacer
+        el mismo Score.objects.update_or_create(ticker, date=hoy) que ya
+        hace scoring/management/commands/compute_scores.py. Sin esto,
+        "Refrescar precios" nunca guardaba ningún Score (bug real
+        encontrado corriendo el flujo completo contra yfinance real, no
+        solo con pytest -- api/views.py::WatchlistRefreshView tiene el
+        mismo problema pero no se toca acá, ver CLAUDE.md).
         """
         watchlist = get_object_or_404(Watchlist, pk=request.POST.get("watchlist_id"))
         tickers = Ticker.objects.filter(watchlist_items__watchlist=watchlist)
 
+        today = localdate()
         processed = 0
         price_errors = 0
         scores_updated = 0
@@ -151,10 +166,15 @@ class DashboardView(View):
                 price_errors += 1
                 continue
 
-            score, _ = compute_score(ticker)
+            score, components = compute_score(ticker)
             if score is None:
                 skipped_insufficient_history += 1
             else:
+                Score.objects.update_or_create(
+                    ticker=ticker,
+                    date=today,
+                    defaults={"score": score, "components": components},
+                )
                 scores_updated += 1
 
         messages.success(
@@ -263,6 +283,12 @@ class WatchlistDeleteView(View):
 
 
 class WatchlistTickerAddView(View):
+    """
+    Única excepción a "nunca llamar servicios externos desde una vista
+    sync del dashboard" (fetch_ticker_metadata golpea yfinance) -- ver
+    CLAUDE.md, sección "Frontend", para la justificación.
+    """
+
     template_name = "dashboard/watchlist_ticker_add.html"
 
     def get(self, request, pk):
@@ -281,11 +307,20 @@ class WatchlistTickerAddView(View):
             return redirect("dashboard:dashboard")
 
         symbol = form.cleaned_data["symbol"]
+
+        try:
+            metadata = fetch_ticker_metadata(symbol)
+        except TickerMetadataError:
+            messages.error(
+                request, f"No encontramos ese ticker ('{symbol}') -- revisá el símbolo."
+            )
+            return redirect("dashboard:dashboard")
+
         ticker, _ = Ticker.objects.get_or_create(
             symbol=symbol,
             defaults={
-                "name": form.cleaned_data["name"],
-                "exchange": form.cleaned_data["exchange"],
+                "name": metadata["name"],
+                "exchange": metadata["exchange"],
             },
         )
 
