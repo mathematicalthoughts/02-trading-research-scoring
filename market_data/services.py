@@ -1,11 +1,17 @@
 import logging
 import math
+from datetime import timedelta
 
 import yfinance as yf
 
 from .models import PriceBar, Ticker
 
 logger = logging.getLogger(__name__)
+
+# Margen para capturar revisiones tardías de datos de yfinance en los
+# últimos días (ej. un cierre ajustado horas después) sin tener que
+# volver a bajar todo el histórico -- ver load_prices_for_ticker.
+OVERLAP_DAYS = 5
 
 
 class PriceLoadError(Exception):
@@ -18,9 +24,26 @@ class TickerMetadataError(Exception):
 
 def load_prices_for_ticker(ticker: Ticker, days: int) -> int:
     """
-    Descarga el histórico diario OHLCV de `ticker` para los últimos `days`
-    días vía yfinance y hace update_or_create en PriceBar por (ticker, date)
-    -- correr esto dos veces con los mismos datos no duplica filas.
+    Descarga el histórico diario OHLCV de `ticker` vía yfinance y hace
+    update_or_create en PriceBar por (ticker, date) -- correr esto dos
+    veces con los mismos datos no duplica filas.
+
+    El fetch de `days` días completos es SOLO el bootstrap único de un
+    ticker que todavía no tiene ningún PriceBar. Si el ticker ya tiene
+    historial, el refresh es INCREMENTAL: se pide a yfinance desde
+    (último date guardado - OVERLAP_DAYS), nunca los `days` completos de
+    nuevo. Bug real visto en producción (Render, logs con "WORKER
+    TIMEOUT" + SIGKILL por presunto out-of-memory -- no una excepción de
+    Python): con el fetch completo en CADA refresh, una watchlist con
+    varios tickers de historia profunda (REFRESH_DAYS=500 c/u,
+    secuencial dentro del mismo request) no entraba en el timeout del
+    worker de Gunicorn del plan free/starter de Render.
+
+    Limitación conocida, no resuelta acá: si se agregan varios tickers
+    NUEVOS al mismo watchlist y se aprieta "Refrescar precios" una sola
+    vez, todavía se hace el bootstrap completo de cada uno en el mismo
+    request -- agregar tickers de a uno y refrescar es el flujo normal
+    que evita esto.
 
     Devuelve la cantidad de filas creadas/actualizadas. Una fila con
     Open/High/Low/Close o Volume = NaN (común en la barra del día en
@@ -37,7 +60,12 @@ def load_prices_for_ticker(ticker: Ticker, days: int) -> int:
     resto de los tickers.
     """
     try:
-        history = yf.Ticker(ticker.symbol).history(period=f"{days}d")
+        latest_bar = ticker.price_bars.order_by("-date").first()
+        if latest_bar is not None:
+            start = latest_bar.date - timedelta(days=OVERLAP_DAYS)
+            history = yf.Ticker(ticker.symbol).history(start=start)
+        else:
+            history = yf.Ticker(ticker.symbol).history(period=f"{days}d")
 
         if history is None or history.empty:
             raise PriceLoadError(

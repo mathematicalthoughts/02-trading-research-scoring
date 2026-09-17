@@ -4,6 +4,8 @@ eso ya está cubierto en test_load_prices.py). Nunca pega a la red real de
 yfinance: mockea market_data.services.yf.Ticker.
 """
 
+import datetime
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -11,6 +13,7 @@ from django.test import TestCase
 
 from .models import PriceBar, Ticker
 from .services import (
+    OVERLAP_DAYS,
     PriceLoadError,
     TickerMetadataError,
     fetch_ticker_metadata,
@@ -134,6 +137,73 @@ class LoadPricesForTickerNanHandlingTests(TestCase):
         ):
             with self.assertRaises(PriceLoadError):
                 load_prices_for_ticker(self.ticker, days=5)
+
+
+class LoadPricesForTickerIncrementalFetchTests(TestCase):
+    """
+    Regresión encontrada en producción (Render): con el fetch completo de
+    `days` en CADA refresh, una watchlist con varios tickers de historia
+    profunda (REFRESH_DAYS=500 c/u) no entraba en el timeout del worker
+    de Gunicorn -- "WORKER TIMEOUT" + SIGKILL por presunto OOM, no una
+    excepción de Python (ningún mock lo reproduce; ver verificación real
+    en el reporte de este cambio). El fetch de `days` completos ahora es
+    SOLO el bootstrap de un ticker sin ningún PriceBar todavía.
+    """
+
+    def setUp(self):
+        self.ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+
+    def test_ticker_without_history_does_full_bootstrap_fetch(self):
+        history = _history_df(
+            [
+                {
+                    "date": "2026-09-01",
+                    "open": 150.0,
+                    "high": 151.5,
+                    "low": 149.0,
+                    "close": 150.75,
+                    "volume": 1_000_000,
+                }
+            ]
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = history
+
+        with patch("market_data.services.yf.Ticker", return_value=mock_ticker):
+            load_prices_for_ticker(self.ticker, days=500)
+
+        mock_ticker.history.assert_called_once_with(period="500d")
+
+    def test_ticker_with_existing_history_does_incremental_fetch_since_last_date(self):
+        PriceBar.objects.create(
+            ticker=self.ticker,
+            date=datetime.date(2026, 9, 1),
+            open=Decimal("150"),
+            high=Decimal("151"),
+            low=Decimal("149"),
+            close=Decimal("150.5"),
+            volume=1_000_000,
+        )
+        history = _history_df(
+            [
+                {
+                    "date": "2026-09-05",
+                    "open": 152.0,
+                    "high": 153.0,
+                    "low": 151.0,
+                    "close": 152.5,
+                    "volume": 1_100_000,
+                }
+            ]
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = history
+
+        with patch("market_data.services.yf.Ticker", return_value=mock_ticker):
+            load_prices_for_ticker(self.ticker, days=500)
+
+        expected_start = datetime.date(2026, 9, 1) - datetime.timedelta(days=OVERLAP_DAYS)
+        mock_ticker.history.assert_called_once_with(start=expected_start)
 
 
 class FetchTickerMetadataTests(TestCase):
