@@ -396,6 +396,21 @@ textarea:focus-visible,
   font-weight: 600;
 }
 
+/* Indicador de ranking (DashboardView) -- solo en el ticker con el score
+   más alto del watchlist cuando llega a band-top; reusa el color alcista
+   porque es señal de score, no un elemento decorativo. */
+.best-setup-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--color-bullish);
+  margin-left: var(--space-2);
+  white-space: nowrap;
+}
+
 /* --- Tablas --- */
 
 .table-app {

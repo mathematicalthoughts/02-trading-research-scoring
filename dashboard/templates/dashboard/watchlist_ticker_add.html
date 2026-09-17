@@ -1,0 +1,29 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Agregar ticker a {{ watchlist.name }}{% endblock %}
+
+{% block content %}
+  <h1>Agregar ticker a "{{ watchlist.name }}"</h1>
+
+  <section class="panel panel--tight" style="max-width: 480px;">
+    <form method="post" action="{% url 'dashboard:watchlist-ticker-add' watchlist.pk %}">
+      {% csrf_token %}
+      <div class="field">
+        <label for="{{ form.symbol.id_for_label }}">Símbolo</label>
+        {{ form.symbol }}
+      </div>
+      <div class="field">
+        <label for="{{ form.name.id_for_label }}">Nombre</label>
+        {{ form.name }}
+      </div>
+      <div class="field">
+        <label for="{{ form.exchange.id_for_label }}">Exchange (opcional)</label>
+        {{ form.exchange }}
+      </div>
+      <div class="cluster">
+        <button type="submit" class="btn-app btn-app--primary">Agregar ticker</button>
+        <a class="btn-app btn-app--secondary" href="{% url 'dashboard:dashboard' %}">Cancelar</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}

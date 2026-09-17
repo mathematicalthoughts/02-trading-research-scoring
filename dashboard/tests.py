@@ -111,6 +111,280 @@ class DashboardViewTests(TestCase):
         response = self.client.post(reverse("dashboard:dashboard"), {"watchlist_id": 9999})
         self.assertEqual(response.status_code, 404)
 
+    def test_tickers_are_ranked_by_score_descending_with_none_last(self):
+        googl = Ticker.objects.create(symbol="GOOGL", name="Alphabet Inc.")
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=googl)
+        # MSFT queda sin Score (no se crea ninguno).
+        Score.objects.create(
+            ticker=self.aapl, date=datetime.date(2026, 1, 1), score=55, components={}
+        )
+        Score.objects.create(
+            ticker=googl, date=datetime.date(2026, 1, 1), score=90, components={}
+        )
+
+        response = self.client.get(reverse("dashboard:dashboard"))
+
+        symbols_in_order = [
+            row["ticker"].symbol for row in response.context["watchlists"][0]["tickers"]
+        ]
+        self.assertEqual(symbols_in_order, ["GOOGL", "AAPL", "MSFT"])
+
+    def test_best_setup_indicator_only_when_top_score_is_band_top(self):
+        Score.objects.create(
+            ticker=self.aapl, date=datetime.date(2026, 1, 1), score=90, components={}
+        )
+        Score.objects.create(
+            ticker=self.msft, date=datetime.date(2026, 1, 1), score=70, components={}
+        )
+
+        response = self.client.get(reverse("dashboard:dashboard"))
+
+        rows = response.context["watchlists"][0]["tickers"]
+        self.assertTrue(rows[0]["is_best_setup"])
+        self.assertEqual(rows[0]["ticker"].symbol, "AAPL")
+        self.assertFalse(rows[1]["is_best_setup"])
+        self.assertContains(response, "Mejor setup")
+
+    def test_no_best_setup_indicator_when_no_ticker_reaches_band_top(self):
+        Score.objects.create(
+            ticker=self.aapl, date=datetime.date(2026, 1, 1), score=70, components={}
+        )
+
+        response = self.client.get(reverse("dashboard:dashboard"))
+
+        rows = response.context["watchlists"][0]["tickers"]
+        self.assertFalse(any(row["is_best_setup"] for row in rows))
+        self.assertNotContains(response, "Mejor setup")
+
+
+class WatchlistCreateViewTests(TestCase):
+    def test_get_shows_empty_form(self):
+        response = self.client.get(reverse("dashboard:watchlist-create"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "dashboard/watchlist_form.html")
+
+    def test_post_creates_watchlist_and_redirects(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-create"), {"name": "Semiconductors"}, follow=True
+        )
+
+        self.assertTrue(Watchlist.objects.filter(name="Semiconductors").exists())
+        self.assertRedirects(response, reverse("dashboard:dashboard"))
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertIn("'Semiconductors' creado", messages[0])
+
+    def test_post_with_blank_name_reshows_form_with_errors(self):
+        response = self.client.post(reverse("dashboard:watchlist-create"), {"name": ""})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Watchlist.objects.exists())
+        self.assertFalse(response.context["form"].is_valid())
+
+    def test_post_with_duplicate_name_reshows_form_with_errors(self):
+        Watchlist.objects.create(name="Tech")
+
+        response = self.client.post(reverse("dashboard:watchlist-create"), {"name": "Tech"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Watchlist.objects.filter(name="Tech").count(), 1)
+
+
+class WatchlistDeleteViewTests(TestCase):
+    def setUp(self):
+        self.watchlist = Watchlist.objects.create(name="Tech")
+        ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=ticker)
+
+    def test_get_shows_confirmation_and_does_not_delete(self):
+        response = self.client.get(
+            reverse("dashboard:watchlist-delete", args=[self.watchlist.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "dashboard/watchlist_confirm_delete.html")
+        self.assertTrue(Watchlist.objects.filter(pk=self.watchlist.pk).exists())
+        self.assertEqual(response.context["ticker_count"], 1)
+        self.assertContains(response, "Tech")
+
+    def test_post_deletes_watchlist(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-delete", args=[self.watchlist.pk]), follow=True
+        )
+
+        self.assertFalse(Watchlist.objects.filter(pk=self.watchlist.pk).exists())
+        self.assertRedirects(response, reverse("dashboard:dashboard"))
+
+    def test_get_unknown_watchlist_returns_404(self):
+        response = self.client.get(reverse("dashboard:watchlist-delete", args=[9999]))
+        self.assertEqual(response.status_code, 404)
+
+
+class WatchlistTickerAddViewTests(TestCase):
+    def setUp(self):
+        self.watchlist = Watchlist.objects.create(name="Tech")
+
+    def test_get_shows_form(self):
+        response = self.client.get(
+            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "dashboard/watchlist_ticker_add.html")
+
+    def test_post_creates_new_ticker_and_adds_it(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+            {"symbol": "aapl", "name": "Apple Inc.", "exchange": "NASDAQ"},
+            follow=True,
+        )
+
+        ticker = Ticker.objects.get(symbol="AAPL")
+        self.assertEqual(ticker.name, "Apple Inc.")
+        self.assertEqual(ticker.exchange, "NASDAQ")
+        self.assertTrue(
+            WatchlistItem.objects.filter(watchlist=self.watchlist, ticker=ticker).exists()
+        )
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertIn("agregado a 'Tech'", messages[0])
+
+    def test_post_reuses_existing_ticker_by_symbol(self):
+        existing = Ticker.objects.create(symbol="AAPL", name="Apple Inc. (original)")
+
+        self.client.post(
+            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+            {"symbol": "AAPL", "name": "Otro nombre", "exchange": ""},
+        )
+
+        self.assertEqual(Ticker.objects.filter(symbol="AAPL").count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.name, "Apple Inc. (original)")  # get_or_create no pisa el existente
+
+    def test_post_duplicate_in_same_watchlist_shows_error_without_duplicating(self):
+        ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=ticker)
+
+        response = self.client.post(
+            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+            {"symbol": "AAPL", "name": "Apple Inc.", "exchange": ""},
+            follow=True,
+        )
+
+        self.assertEqual(
+            WatchlistItem.objects.filter(watchlist=self.watchlist, ticker=ticker).count(), 1
+        )
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertIn("ya está en 'Tech'", messages[0])
+
+    def test_post_invalid_form_shows_error_message(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-ticker-add", args=[self.watchlist.pk]),
+            {"symbol": "", "name": ""},
+            follow=True,
+        )
+
+        self.assertFalse(Ticker.objects.exists())
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertTrue(len(messages) >= 1)
+
+    def test_post_unknown_watchlist_returns_404(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-ticker-add", args=[9999]),
+            {"symbol": "AAPL", "name": "Apple Inc."},
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class WatchlistTickerRemoveViewTests(TestCase):
+    def setUp(self):
+        self.watchlist = Watchlist.objects.create(name="Tech")
+        self.ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        self.item = WatchlistItem.objects.create(watchlist=self.watchlist, ticker=self.ticker)
+
+    def test_post_removes_the_item_but_keeps_the_ticker(self):
+        response = self.client.post(
+            reverse(
+                "dashboard:watchlist-ticker-remove",
+                args=[self.watchlist.pk, self.item.pk],
+            ),
+            follow=True,
+        )
+
+        self.assertFalse(WatchlistItem.objects.filter(pk=self.item.pk).exists())
+        self.assertTrue(Ticker.objects.filter(pk=self.ticker.pk).exists())
+        self.assertRedirects(response, reverse("dashboard:dashboard"))
+        messages = [str(m) for m in response.context["messages"]]
+        self.assertIn("quitado de 'Tech'", messages[0])
+
+    def test_get_is_not_allowed(self):
+        response = self.client.get(
+            reverse(
+                "dashboard:watchlist-ticker-remove",
+                args=[self.watchlist.pk, self.item.pk],
+            )
+        )
+        self.assertEqual(response.status_code, 405)
+
+    def test_unknown_item_returns_404(self):
+        response = self.client.post(
+            reverse("dashboard:watchlist-ticker-remove", args=[self.watchlist.pk, 9999])
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class WatchlistExportViewTests(TestCase):
+    def setUp(self):
+        self.watchlist = Watchlist.objects.create(name="Tech")
+        self.aapl = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        self.msft = Ticker.objects.create(symbol="MSFT", name="Microsoft Corp.")
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=self.aapl)
+        WatchlistItem.objects.create(watchlist=self.watchlist, ticker=self.msft)
+        # MSFT queda sin Score a propósito.
+        Score.objects.create(
+            ticker=self.aapl,
+            date=datetime.date(2026, 1, 2),
+            score=70,
+            components={
+                "trend_points": 40,
+                "momentum_points": 30,
+                "volume_points": 0,
+                "rsi14": 61.37,
+                "sma20": 319.27,
+                "sma50": 318.70,
+                "atr14": 7.55,
+                "relative_volume": 0.74,
+            },
+        )
+
+    def test_content_type_and_filename(self):
+        response = self.client.get(
+            reverse("dashboard:watchlist-export", args=[self.watchlist.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("attachment; filename=", response["Content-Disposition"])
+        self.assertIn("watchlist_tech_", response["Content-Disposition"])
+        self.assertIn(".csv", response["Content-Disposition"])
+
+    def test_csv_content_includes_header_scored_and_unscored_rows(self):
+        response = self.client.get(
+            reverse("dashboard:watchlist-export", args=[self.watchlist.pk])
+        )
+        content = response.content.decode()
+        rows = content.strip().splitlines()
+
+        self.assertEqual(
+            rows[0],
+            "Ticker,Nombre,Score,Fecha,Tendencia,Momentum,Volumen,RSI14,SMA20,SMA50,ATR14,VolRelativo",
+        )
+        # AAPL (con score): orden alfabético, AAPL antes que MSFT.
+        self.assertIn("AAPL,Apple Inc.,70,2026-01-02,40,30,0,61.37,319.27,318.7,7.55,0.74", rows[1])
+        # MSFT (sin score): la fila existe, con las columnas de score vacías.
+        self.assertEqual(rows[2], "MSFT,Microsoft Corp.,,,,,,,,,,")
+
+    def test_unknown_watchlist_returns_404(self):
+        response = self.client.get(reverse("dashboard:watchlist-export", args=[9999]))
+        self.assertEqual(response.status_code, 404)
+
 
 class TickerDetailViewTests(TestCase):
     def setUp(self):

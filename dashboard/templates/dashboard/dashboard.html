@@ -3,13 +3,18 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-  <h1>Dashboard</h1>
-  <p class="text-muted-token">Watchlists y el score técnico más reciente de cada ticker.</p>
+  <div class="cluster" style="justify-content: space-between; margin-bottom: var(--space-4);">
+    <div>
+      <h1>Dashboard</h1>
+      <p class="text-muted-token">Watchlists y el score técnico más reciente de cada ticker.</p>
+    </div>
+    <a class="btn-app btn-app--primary" href="{% url 'dashboard:watchlist-create' %}">+ Nuevo watchlist</a>
+  </div>
 
   {% if not watchlists %}
     <div class="panel empty-state">
       <h3>Todavía no hay ningún watchlist</h3>
-      <p>Cargá un <code>Watchlist</code> y algún <code>Ticker</code> desde el admin de Django para empezar.</p>
+      <p>Creá uno con "+ Nuevo watchlist" para empezar.</p>
     </div>
   {% endif %}
 
@@ -17,11 +22,15 @@
     <section class="panel">
       <div class="panel__header">
         <h2 class="panel__title">{{ entry.watchlist.name }}</h2>
-        <form method="post" action="{% url 'dashboard:dashboard' %}">
-          {% csrf_token %}
-          <input type="hidden" name="watchlist_id" value="{{ entry.watchlist.id }}">
-          <button type="submit" class="btn-app btn-app--primary">Refrescar precios</button>
-        </form>
+        <div class="cluster">
+          <a class="btn-app btn-app--secondary" href="{% url 'dashboard:watchlist-export' entry.watchlist.pk %}">Exportar CSV</a>
+          <form method="post" action="{% url 'dashboard:dashboard' %}">
+            {% csrf_token %}
+            <input type="hidden" name="watchlist_id" value="{{ entry.watchlist.id }}">
+            <button type="submit" class="btn-app btn-app--primary">Refrescar precios</button>
+          </form>
+          <a class="btn-app btn-app--secondary" href="{% url 'dashboard:watchlist-delete' entry.watchlist.pk %}">Eliminar</a>
+        </div>
       </div>
 
       {% if not entry.tickers %}
@@ -35,6 +44,7 @@
                 <th>Nombre</th>
                 <th>Score</th>
                 <th>Fecha del score</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -50,14 +60,40 @@
                     {% else %}
                       <span class="score-pill score-pill--empty">sin score</span>
                     {% endif %}
+                    {% if row.is_best_setup %}
+                      <span class="best-setup-badge">★ Mejor setup</span>
+                    {% endif %}
                   </td>
                   <td class="mono">{% if row.score %}{{ row.score.date }}{% else %}—{% endif %}</td>
+                  <td>
+                    <form method="post" action="{% url 'dashboard:watchlist-ticker-remove' entry.watchlist.pk row.item_id %}">
+                      {% csrf_token %}
+                      <button type="submit" class="btn-app btn-app--secondary">Quitar</button>
+                    </form>
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
       {% endif %}
+
+      <form method="post" action="{% url 'dashboard:watchlist-ticker-add' entry.watchlist.pk %}" class="cluster" style="margin-top: var(--space-4); align-items: flex-end;">
+        {% csrf_token %}
+        <div class="field" style="margin-bottom: 0;">
+          <label for="symbol-{{ entry.watchlist.pk }}">Símbolo</label>
+          <input type="text" id="symbol-{{ entry.watchlist.pk }}" name="symbol" placeholder="AAPL" required style="max-width: 120px;">
+        </div>
+        <div class="field" style="margin-bottom: 0;">
+          <label for="name-{{ entry.watchlist.pk }}">Nombre</label>
+          <input type="text" id="name-{{ entry.watchlist.pk }}" name="name" placeholder="Apple Inc." required>
+        </div>
+        <div class="field" style="margin-bottom: 0;">
+          <label for="exchange-{{ entry.watchlist.pk }}">Exchange</label>
+          <input type="text" id="exchange-{{ entry.watchlist.pk }}" name="exchange" placeholder="NASDAQ" style="max-width: 140px;">
+        </div>
+        <button type="submit" class="btn-app btn-app--secondary">+ Agregar ticker</button>
+      </form>
     </section>
   {% endfor %}
 {% endblock %}

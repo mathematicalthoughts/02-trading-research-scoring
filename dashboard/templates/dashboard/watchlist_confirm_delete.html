@@ -1,0 +1,25 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Eliminar {{ watchlist.name }}{% endblock %}
+
+{% block content %}
+  <h1>Eliminar watchlist</h1>
+
+  <div class="panel empty-state">
+    <h3>¿Eliminar "{{ watchlist.name }}"?</h3>
+    <p>
+      {% if ticker_count %}
+        Tiene {{ ticker_count }} ticker{{ ticker_count|pluralize }} vinculado{{ ticker_count|pluralize }}.
+        Esto no borra los tickers, sus precios ni sus scores -- solo el watchlist y sus links.
+      {% else %}
+        Este watchlist no tiene ningún ticker vinculado todavía.
+      {% endif %}
+      Esta acción no se puede deshacer.
+    </p>
+    <form method="post" class="cluster" style="justify-content: center;">
+      {% csrf_token %}
+      <button type="submit" class="btn-app btn-app--primary">Sí, eliminar</button>
+      <a class="btn-app btn-app--secondary" href="{% url 'dashboard:dashboard' %}">Cancelar</a>
+    </form>
+  </div>
+{% endblock %}

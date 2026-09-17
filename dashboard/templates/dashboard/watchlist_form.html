@@ -1,0 +1,24 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Nuevo watchlist{% endblock %}
+
+{% block content %}
+  <h1>Nuevo watchlist</h1>
+
+  <section class="panel panel--tight" style="max-width: 420px;">
+    <form method="post">
+      {% csrf_token %}
+      <div class="field">
+        <label for="{{ form.name.id_for_label }}">Nombre</label>
+        {{ form.name }}
+        {% for error in form.name.errors %}
+          <p class="agent-status agent-status--error">{{ error }}</p>
+        {% endfor %}
+      </div>
+      <div class="cluster">
+        <button type="submit" class="btn-app btn-app--primary">Crear watchlist</button>
+        <a class="btn-app btn-app--secondary" href="{% url 'dashboard:dashboard' %}">Cancelar</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}
