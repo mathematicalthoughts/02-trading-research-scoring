@@ -63,8 +63,8 @@ class WatchlistRefreshViewTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(mock_load.call_count, 2)
         self.assertEqual(mock_compute.call_count, 2)
-        mock_load.assert_any_call(self.aapl, days=90)
-        mock_load.assert_any_call(self.msft, days=90)
+        mock_load.assert_any_call(self.aapl, days=500)
+        mock_load.assert_any_call(self.msft, days=500)
 
         self.assertEqual(response.data["tickers_procesados"], 2)
         self.assertEqual(response.data["errores_de_precio"], 0)

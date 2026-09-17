@@ -147,6 +147,41 @@ class BucketGroupingTests(TestCase):
         self.assertEqual(list(result["buckets"].keys()), ["80-100"])
 
 
+class LongHorizonHistoryRequirementTests(TestCase):
+    """
+    Regresión: REFRESH_DAYS=90 en dashboard/views.py y
+    api/views.py::WatchlistRefreshView daba ~80-90 barras de trading --
+    insuficiente para un horizon_days largo, que necesita al menos
+    MIN_BARS_REQUIRED (50) + horizon_days barras para generar un solo
+    punto. Con REFRESH_DAYS=500 (~350 barras) alcanza con margen.
+    """
+
+    def test_horizon_60_returns_points_with_350_bars(self):
+        ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        for i in range(350):
+            close = 100 + (i % 7) - 3  # oscila, nunca monótono ni plano
+            _make_bar(ticker, i, close)
+
+        result = run_backtest(ticker, horizon_days=60)
+
+        self.assertNotIn("reason", result)
+        self.assertIn("buckets", result)
+        self.assertGreater(result["total_points"], 0)
+
+    def test_horizon_60_reproduces_the_bug_with_only_85_bars(self):
+        # 85 barras ~ lo que daba el REFRESH_DAYS=90 (bug) viejo -- no
+        # alcanza para MIN_BARS_REQUIRED (50) + horizon_days (60) = 110.
+        ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")
+        for i in range(85):
+            close = 100 + (i % 7) - 3
+            _make_bar(ticker, i, close)
+
+        result = run_backtest(ticker, horizon_days=60)
+
+        self.assertIn("reason", result)
+        self.assertNotIn("buckets", result)
+
+
 class InsufficientHistoryTests(TestCase):
     def test_ticker_without_enough_bars_returns_empty_result_with_reason(self):
         ticker = Ticker.objects.create(symbol="AAPL", name="Apple Inc.")

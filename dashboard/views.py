@@ -49,7 +49,16 @@ CSV_COLUMNS = [
 
 # Mismo valor que api/views.py::WatchlistRefreshView.REFRESH_DAYS --
 # duplicado a propósito: la vista DRF no se toca (ver CLAUDE.md).
-REFRESH_DAYS = 90
+#
+# 500 días calendario ~= 350 barras de trading. Con 90 (~80-90 barras)
+# no alcanzaba para dos cosas a la vez: el chart de precio necesita 60
+# barras visibles + 50 de warm-up previo de SMA50 = 110 mínimo (con
+# menos, la SMA50 aparece cortada/None en los primeros ~2 meses del
+# rango visible, ver CHART_HISTORY_BARS), y el backtest con
+# horizon_days > ~30 sesiones directamente no tenía suficientes barras
+# futuras para generar ningún punto. Bug real encontrado contra datos
+# reales, no con mocks -- ver CLAUDE.md.
+REFRESH_DAYS = 500
 
 CHART_HISTORY_BARS = 200
 CHART_DISPLAY_BARS = 60

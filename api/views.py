@@ -11,7 +11,11 @@ from scoring.services import compute_score
 from .serializers import AgentExplanationSerializer, ScoreSerializer, WatchlistSerializer
 from .throttling import AgentExplainThrottle
 
-REFRESH_DAYS = 90
+# 500 días calendario ~= 350 barras de trading -- sincronizado en valor
+# con dashboard/views.py::REFRESH_DAYS (duplicado a propósito, ver
+# CLAUDE.md): con 90 no alcanzaba para el warm-up de SMA50 del chart ni
+# para backtests con horizon_days > ~30 sesiones.
+REFRESH_DAYS = 500
 
 
 class WatchlistListView(APIView):
@@ -23,8 +27,8 @@ class WatchlistListView(APIView):
 
 class WatchlistRefreshView(APIView):
     """
-    Para cada Ticker del watchlist: load_prices_for_ticker (días=90) y
-    después compute_score. Mismo espíritu que el resumen de
+    Para cada Ticker del watchlist: load_prices_for_ticker (días=REFRESH_DAYS)
+    y después compute_score. Mismo espíritu que el resumen de
     load_prices/compute_scores management commands, pero como response
     JSON en vez de stdout -- un ticker roto no tumba el resto.
     """

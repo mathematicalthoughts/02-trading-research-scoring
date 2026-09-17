@@ -82,8 +82,8 @@ class DashboardViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_load.call_count, 2)
         self.assertEqual(mock_compute.call_count, 2)
-        mock_load.assert_any_call(self.aapl, days=90)
-        mock_load.assert_any_call(self.msft, days=90)
+        mock_load.assert_any_call(self.aapl, days=500)
+        mock_load.assert_any_call(self.msft, days=500)
 
         messages = [str(m) for m in response.context["messages"]]
         self.assertEqual(len(messages), 1)
@@ -556,6 +556,25 @@ class TickerDetailViewTests(TestCase):
         self.assertIsNotNone(response.context["chart_data"])
         self.assertEqual(len(response.context["chart_data"]["labels"]), 60)
         self.assertContains(response, "priceChartData")
+
+    def test_sma50_has_no_none_values_with_enough_warmup_history(self):
+        """
+        Regresión: con menos de ~110 barras (CHART_DISPLAY_BARS=60 +
+        50 de warm-up previo que necesita SMA50), la SMA50 aparecía
+        cortada (None) en los primeros puntos visibles del chart --
+        causa raíz: REFRESH_DAYS=90 solo cargaba ~80-90 barras. Con 350
+        barras (REFRESH_DAYS=500) alcanza con margen.
+        """
+        for i in range(350):
+            _make_bar(self.ticker, i, close=100 + (i % 7) - 3)
+
+        response = self.client.get(
+            reverse("dashboard:ticker-detail", args=[self.ticker.symbol])
+        )
+
+        sma50_series = response.context["chart_data"]["sma50"]
+        self.assertEqual(len(sma50_series), 60)
+        self.assertNotIn(None, sma50_series)
 
     def test_chart_data_is_none_without_price_bars(self):
         response = self.client.get(
